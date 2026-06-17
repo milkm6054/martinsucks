@@ -26,7 +26,7 @@ type PlayerRow = {
 
 type StatsRun = {
   id: string;
-  status: "RUNNING" | "COMPLETED" | "FAILED";
+  status: "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED";
   requestedBy: string | null;
   totalPlayers: number;
   processedPlayers: number;
@@ -189,6 +189,46 @@ export function StatsClient() {
     }
   }
 
+  async function updateRun(action: "pause" | "resume") {
+    if (!data?.latestRun) {
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/stats", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          runId: data.latestRun.id,
+        }),
+      });
+      const payload = await parseApiResponse<StatsResponse>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || `Failed to ${action} stats refresh.`);
+      }
+
+      setNotice(action === "pause" ? "Stats refresh paused." : "Stats refresh resumed.");
+      setData((current) => ({
+        latestRun: payload.latestRun,
+        players: current?.players ?? [],
+        diagnostics: current?.diagnostics,
+      }));
+      await loadStats();
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : `Failed to ${action} stats refresh.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div className="surface-card p-6">
@@ -202,9 +242,21 @@ export function StatsClient() {
               time.
             </p>
           </div>
-          <button className="primary-button px-4 py-2" onClick={startRun} disabled={busy || data?.latestRun?.status === "RUNNING"}>
-            {data?.latestRun?.status === "RUNNING" ? "Refresh running" : busy ? "Starting..." : "Refresh stats"}
-          </button>
+          <div className="flex flex-wrap gap-3">
+            <button className="primary-button px-4 py-2" onClick={startRun} disabled={busy || data?.latestRun?.status === "RUNNING"}>
+              {data?.latestRun?.status === "RUNNING" ? "Refresh running" : busy ? "Starting..." : "Refresh stats"}
+            </button>
+            {data?.latestRun?.status === "RUNNING" ? (
+              <button className="px-4 py-2" onClick={() => updateRun("pause")} disabled={busy}>
+                Pause
+              </button>
+            ) : null}
+            {data?.latestRun?.status === "PAUSED" ? (
+              <button className="px-4 py-2" onClick={() => updateRun("resume")} disabled={busy}>
+                Resume
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 

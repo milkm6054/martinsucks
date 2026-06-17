@@ -353,3 +353,84 @@ export async function POST() {
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const body = (await request.json()) as {
+      action?: "pause" | "resume";
+      runId?: string;
+    };
+
+    if (!body.runId?.trim()) {
+      return NextResponse.json({ error: "runId is required." }, { status: 400 });
+    }
+
+    if (body.action !== "pause" && body.action !== "resume") {
+      return NextResponse.json({ error: "action must be pause or resume." }, { status: 400 });
+    }
+
+    const run = await prisma.statsRun.findUnique({
+      where: {
+        id: body.runId,
+      },
+      include: {
+        items: {
+          orderBy: {
+            position: "asc",
+          },
+        },
+      },
+    });
+
+    if (!run) {
+      return NextResponse.json({ error: "Run not found." }, { status: 404 });
+    }
+
+    if (body.action === "pause") {
+      if (run.status !== StatsRunStatus.RUNNING) {
+        return NextResponse.json({ error: "Only running stats jobs can be paused." }, { status: 409 });
+      }
+
+      const pausedRun = await prisma.statsRun.update({
+        where: { id: run.id },
+        data: {
+          status: StatsRunStatus.PAUSED,
+        },
+        include: {
+          items: {
+            orderBy: {
+              position: "asc",
+            },
+          },
+        },
+      });
+
+      return NextResponse.json({ latestRun: serializeRun(pausedRun) });
+    }
+
+    if (run.status !== StatsRunStatus.PAUSED) {
+      return NextResponse.json({ error: "Only paused stats jobs can be resumed." }, { status: 409 });
+    }
+
+    const resumedRun = await prisma.statsRun.update({
+      where: { id: run.id },
+      data: {
+        status: StatsRunStatus.RUNNING,
+      },
+      include: {
+        items: {
+          orderBy: {
+            position: "asc",
+          },
+        },
+      },
+    });
+
+    startStatsRunProcessing(resumedRun.id);
+
+    return NextResponse.json({ latestRun: serializeRun(resumedRun) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to update stats run.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

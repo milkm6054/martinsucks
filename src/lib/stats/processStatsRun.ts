@@ -25,23 +25,38 @@ export function startStatsRunProcessing(runId: string): void {
 
 async function processStatsRun(runId: string): Promise<void> {
   try {
-    const run = await prisma.statsRun.findUnique({
-      where: { id: runId },
-      include: {
-        items: {
-          orderBy: {
-            position: "asc",
+    while (true) {
+      const run = await prisma.statsRun.findUnique({
+        where: { id: runId },
+        include: {
+          items: {
+            where: {
+              status: PlayerStatsFetchStatus.PENDING,
+            },
+            orderBy: {
+              position: "asc",
+            },
+            take: 1,
           },
         },
-      },
-    });
+      });
 
-    if (!run) {
-      return;
-    }
+      if (!run) {
+        return;
+      }
 
-    for (let index = 0; index < run.items.length; index += 1) {
-      const item = run.items[index];
+      if (run.status === StatsRunStatus.PAUSED) {
+        return;
+      }
+
+      if (run.status !== StatsRunStatus.RUNNING) {
+        return;
+      }
+
+      const item = run.items[0];
+      if (!item) {
+        break;
+      }
 
       await prisma.statsRunItem.update({
         where: { id: item.id },
@@ -145,12 +160,23 @@ async function processStatsRun(runId: string): Promise<void> {
         ]);
       }
 
-      const isLastItem = index === run.items.length - 1;
-      if (isLastItem) {
-        continue;
+      const refreshedRun = await prisma.statsRun.findUnique({
+        where: { id: runId },
+        select: {
+          status: true,
+          processedPlayers: true,
+        },
+      });
+
+      if (!refreshedRun || refreshedRun.status === StatsRunStatus.PAUSED) {
+        return;
       }
 
-      const completedThisBatch = (index + 1) % BATCH_SIZE === 0;
+      if (refreshedRun.status !== StatsRunStatus.RUNNING) {
+        return;
+      }
+
+      const completedThisBatch = refreshedRun.processedPlayers % BATCH_SIZE === 0;
       await delay(completedThisBatch ? BATCH_PAUSE_MS : PLAYER_DELAY_MS);
     }
 

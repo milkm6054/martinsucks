@@ -30,6 +30,7 @@ enum PlayerStatsFetchStatus {
 
 enum StatsRunStatus {
   RUNNING
+  PAUSED
   COMPLETED
   FAILED
 }
