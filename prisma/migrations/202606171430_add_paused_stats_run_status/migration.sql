@@ -1,6 +1,1 @@
-DO $$
-BEGIN
-  ALTER TYPE "StatsRunStatus" ADD VALUE 'PAUSED';
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END $$;
+ALTER TYPE "StatsRunStatus" ADD VALUE IF NOT EXISTS 'PAUSED';
