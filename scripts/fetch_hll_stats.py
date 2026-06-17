@@ -21,6 +21,7 @@ ROLE_TO_BUCKET = {
     "Infantry": "Infantry",
     "Machine Gunner": "Infantry",
     "Sniper": "Infantry",
+    "Artillery": "Artillery",
     "Armor": "Armor",
     "Tanker": "Armor",
     "Tank Commander": "Armor",
@@ -91,6 +92,7 @@ def extract_role_percentages(page_html: str) -> dict[str, float]:
 def determine_main_role(role_percents: dict[str, float]) -> str | None:
     bucket_scores: dict[str, float] = {
         "Infantry": 0.0,
+        "Artillery": 0.0,
         "Armor": 0.0,
     }
 
@@ -104,7 +106,7 @@ def determine_main_role(role_percents: dict[str, float]) -> str | None:
     if top_score <= 0:
         return None
 
-    for bucket in ["Infantry", "Armor"]:
+    for bucket in ["Infantry", "Artillery", "Armor"]:
         if bucket_scores[bucket] == top_score:
             return bucket
 

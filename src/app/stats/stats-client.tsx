@@ -37,6 +37,9 @@ type StatsRun = {
   startedAt: string;
   finishedAt: string | null;
   playersRemaining: number;
+  averageRetrievalMs: number | null;
+  estimatedRemainingMs: number | null;
+  estimatedCompletionAt: string | null;
 };
 
 type StatsResponse = {
@@ -70,6 +73,27 @@ function formatDateTime(value: string | null | undefined): string {
   }
 
   return new Date(value).toLocaleString("en-GB");
+}
+
+function formatDuration(valueMs: number | null | undefined): string {
+  if (typeof valueMs !== "number" || !Number.isFinite(valueMs) || valueMs <= 0) {
+    return "-";
+  }
+
+  const totalSeconds = Math.round(valueMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+
+  return `${seconds}s`;
 }
 
 function getRowStatus(row: PlayerRow): string {
@@ -161,6 +185,9 @@ export function StatsClient() {
       cachedComplete,
       processedPlayers: latestRun?.processedPlayers ?? 0,
       playersRemaining: latestRun?.playersRemaining ?? players.length,
+      averageRetrievalMs: latestRun?.averageRetrievalMs ?? null,
+      estimatedRemainingMs: latestRun?.estimatedRemainingMs ?? null,
+      estimatedCompletionAt: latestRun?.estimatedCompletionAt ?? null,
     };
   }, [data]);
 
@@ -258,9 +285,9 @@ export function StatsClient() {
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-500">Standalone Service</p>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight">HCA Stats Runner</h1>
             <p className="mt-2 max-w-3xl text-sm muted-copy">
-              Pull KPM and Duel Strength from the last 180 days for the current tournament playerbase in the shared
-              HCA database. Results are cached back into Postgres so the roster app can read them without scraping each
-              time.
+              Pull KPM, Duel Strength and MainRole from the last 180 days for the current tournament playerbase in the
+              shared HCA database. Results are cached back into Postgres so the roster app can read them without
+              scraping each time.
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -286,7 +313,7 @@ export function StatsClient() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
         <div className="surface-card p-5">
           <p className="text-xs uppercase tracking-[0.2em] muted-copy">Tournament players</p>
           <p className="mt-3 text-3xl font-semibold">{summary.totalPlayers}</p>
@@ -306,6 +333,17 @@ export function StatsClient() {
           <p className="text-xs uppercase tracking-[0.2em] muted-copy">Cached results</p>
           <p className="mt-3 text-3xl font-semibold">{summary.cachedComplete}</p>
         </div>
+        <div className="surface-card p-5">
+          <p className="text-xs uppercase tracking-[0.2em] muted-copy">Avg / player</p>
+          <p className="mt-3 text-3xl font-semibold">{formatDuration(summary.averageRetrievalMs)}</p>
+        </div>
+        <div className="surface-card p-5">
+          <p className="text-xs uppercase tracking-[0.2em] muted-copy">ETA</p>
+          <p className="mt-3 text-3xl font-semibold">{formatDuration(summary.estimatedRemainingMs)}</p>
+          {summary.estimatedCompletionAt ? (
+            <p className="mt-2 text-xs muted-copy">Finishes around {formatDateTime(summary.estimatedCompletionAt)}</p>
+          ) : null}
+        </div>
       </div>
 
       {data?.latestRun ? (
@@ -319,7 +357,9 @@ export function StatsClient() {
               </p>
             </div>
             <p className="text-sm muted-copy">
-              Success {data.latestRun.successPlayers} | Failed {data.latestRun.failedPlayers}
+              Success {data.latestRun.successPlayers} | Failed {data.latestRun.failedPlayers} | Avg{" "}
+              {formatDuration(data.latestRun.averageRetrievalMs)} | Remaining{" "}
+              {formatDuration(data.latestRun.estimatedRemainingMs)}
             </p>
           </div>
           <div className="h-3 overflow-hidden rounded-full border border-white/10 bg-white/6">
@@ -357,7 +397,7 @@ export function StatsClient() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center muted-copy">
+                <td colSpan={9} className="px-4 py-6 text-center muted-copy">
                   Loading stats...
                 </td>
               </tr>

@@ -15,10 +15,42 @@ type LatestRunWithItems = Prisma.StatsRunGetPayload<{
   };
 }>;
 
+function buildRunTimings(run: LatestRunWithItems) {
+  const completedDurationsMs = run.items
+    .map((item) => {
+      if (!item.startedAt || !item.finishedAt) {
+        return null;
+      }
+
+      const durationMs = item.finishedAt.getTime() - item.startedAt.getTime();
+      return durationMs > 0 ? durationMs : null;
+    })
+    .filter((value): value is number => typeof value === "number");
+
+  const averageRetrievalMs =
+    completedDurationsMs.length > 0
+      ? Math.round(completedDurationsMs.reduce((total, value) => total + value, 0) / completedDurationsMs.length)
+      : null;
+
+  const playersRemaining = Math.max(run.totalPlayers - run.processedPlayers, 0);
+  const estimatedRemainingMs = averageRetrievalMs !== null ? averageRetrievalMs * playersRemaining : null;
+  const estimatedCompletionAt =
+    estimatedRemainingMs !== null && playersRemaining > 0 ? new Date(Date.now() + estimatedRemainingMs) : null;
+
+  return {
+    playersRemaining,
+    averageRetrievalMs,
+    estimatedRemainingMs,
+    estimatedCompletionAt,
+  };
+}
+
 function serializeRun(run: LatestRunWithItems | null) {
   if (!run) {
     return null;
   }
+
+  const timings = buildRunTimings(run);
 
   return {
     id: run.id,
@@ -30,7 +62,10 @@ function serializeRun(run: LatestRunWithItems | null) {
     failedPlayers: run.failedPlayers,
     startedAt: run.startedAt.toISOString(),
     finishedAt: run.finishedAt?.toISOString() ?? null,
-    playersRemaining: Math.max(run.totalPlayers - run.processedPlayers, 0),
+    playersRemaining: timings.playersRemaining,
+    averageRetrievalMs: timings.averageRetrievalMs,
+    estimatedRemainingMs: timings.estimatedRemainingMs,
+    estimatedCompletionAt: timings.estimatedCompletionAt?.toISOString() ?? null,
     items: run.items.map((item) => ({
       id: item.id,
       playerId: item.playerId,
