@@ -108,6 +108,38 @@ def determine_main_role(role_percents: dict[str, float]) -> str | None:
     return None
 
 
+def stats_are_present(page_html: str) -> bool:
+    return (
+        extract_area_raw_value(page_html, "KPM") is not None
+        or extract_area_raw_value(page_html, "Duel strength") is not None
+    )
+
+
+def wait_for_stats_payload(page) -> tuple[str, str]:
+    last_html = ""
+    last_title = ""
+
+    try:
+        page.wait_for_load_state("networkidle", timeout=4000)
+    except Exception:
+        pass
+
+    for _ in range(18):
+        try:
+            last_title = page.title()
+            last_html = page.content()
+        except Exception:
+            page.wait_for_timeout(300)
+            continue
+
+        if stats_are_present(last_html):
+            return last_title, last_html
+
+        page.wait_for_timeout(500)
+
+    return last_title, last_html
+
+
 def fetch_stats(steam_id64: str) -> dict[str, object]:
     executable_path = detect_browser_executable()
     source_url = build_profile_url(steam_id64)
@@ -153,10 +185,7 @@ window.chrome = { runtime: {} };
         )
 
         page.goto(source_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(10000)
-
-        title = page.title()
-        html = page.content()
+        title, html = wait_for_stats_payload(page)
 
         context.close()
         browser.close()

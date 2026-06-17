@@ -2,9 +2,9 @@ import { PlayerStatsFetchStatus, StatsRunStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { fetchHllRecordStats } from "@/lib/stats/hllRecords";
 
-const PLAYER_DELAY_MS = 1500;
+const PLAYER_DELAY_MS = 900;
 const BATCH_SIZE = 8;
-const BATCH_PAUSE_MS = 12000;
+const BATCH_PAUSE_MS = 9000;
 
 const activeRunIds = new Set<string>();
 
