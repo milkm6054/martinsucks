@@ -40,7 +40,23 @@ type StatsRun = {
 type StatsResponse = {
   latestRun: StatsRun | null;
   players: PlayerRow[];
+  diagnostics?: {
+    rosterEntries: number;
+  };
 };
+
+async function parseApiResponse<T>(response: Response): Promise<T & { error?: string }> {
+  const text = await response.text();
+  if (!text.trim()) {
+    throw new Error(`Empty response from server (${response.status}).`);
+  }
+
+  try {
+    return JSON.parse(text) as T & { error?: string };
+  } catch {
+    throw new Error(`Unexpected response from server (${response.status}): ${text.slice(0, 200)}`);
+  }
+}
 
 function formatValue(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "-";
@@ -83,7 +99,7 @@ export function StatsClient() {
 
   const loadStats = useCallback(async () => {
     const response = await fetch("/api/stats", { cache: "no-store" });
-    const payload = (await response.json()) as StatsResponse & { error?: string };
+    const payload = await parseApiResponse<StatsResponse>(response);
 
     if (!response.ok) {
       throw new Error(payload.error || "Failed to load stats.");
@@ -154,7 +170,7 @@ export function StatsClient() {
           "Content-Type": "application/json",
         },
       });
-      const payload = (await response.json()) as StatsResponse & { error?: string };
+      const payload = await parseApiResponse<StatsResponse>(response);
 
       if (!response.ok) {
         throw new Error(payload.error || "Failed to start stats refresh.");
@@ -196,6 +212,9 @@ export function StatsClient() {
         <div className="surface-card p-5">
           <p className="text-xs uppercase tracking-[0.2em] muted-copy">Tournament players</p>
           <p className="mt-3 text-3xl font-semibold">{summary.totalPlayers}</p>
+          {typeof data?.diagnostics?.rosterEntries === "number" ? (
+            <p className="mt-2 text-xs muted-copy">{data.diagnostics.rosterEntries} active roster entries found</p>
+          ) : null}
         </div>
         <div className="surface-card p-5">
           <p className="text-xs uppercase tracking-[0.2em] muted-copy">Processed this run</p>

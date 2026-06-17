@@ -145,8 +145,89 @@ function buildTournamentPlayerRows(
 }
 
 export async function GET() {
-  const [latestRun, rosterEntries] = await Promise.all([
-    prisma.statsRun.findFirst({
+  try {
+    const [latestRun, rosterEntries] = await Promise.all([
+      prisma.statsRun.findFirst({
+        orderBy: {
+          startedAt: "desc",
+        },
+        include: {
+          items: {
+            orderBy: {
+              position: "asc",
+            },
+          },
+        },
+      }),
+      prisma.rosterEntry.findMany({
+        where: {
+          status: "ACTIVE",
+        },
+        include: {
+          team: {
+            select: {
+              name: true,
+            },
+          },
+          player: {
+            include: {
+              externalStat: {
+                select: {
+                  kpm180: true,
+                  duelStrength180: true,
+                  sourceFetchedAt: true,
+                  fetchStatus: true,
+                  fetchError: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: [
+          {
+            team: {
+              name: "asc",
+            },
+          },
+          {
+            submittedAt: "asc",
+          },
+        ],
+      }),
+    ]);
+
+    return NextResponse.json({
+      latestRun: serializeRun(latestRun),
+      players: buildTournamentPlayerRows(rosterEntries, latestRun),
+      diagnostics: {
+        rosterEntries: rosterEntries.length,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load stats data.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+export async function POST() {
+  try {
+    await prisma.statsRun.updateMany({
+      where: {
+        status: StatsRunStatus.RUNNING,
+        startedAt: {
+          lt: new Date(Date.now() - 1000 * 60 * 60 * 2),
+        },
+      },
+      data: {
+        status: StatsRunStatus.FAILED,
+        finishedAt: new Date(),
+      },
+    });
+
+    const runningRun = await prisma.statsRun.findFirst({
+      where: {
+        status: StatsRunStatus.RUNNING,
+      },
       orderBy: {
         startedAt: "desc",
       },
@@ -157,8 +238,19 @@ export async function GET() {
           },
         },
       },
-    }),
-    prisma.rosterEntry.findMany({
+    });
+
+    if (runningRun) {
+      return NextResponse.json(
+        {
+          error: "A stats refresh is already running.",
+          latestRun: serializeRun(runningRun),
+        },
+        { status: 409 },
+      );
+    }
+
+    const rosterEntries = await prisma.rosterEntry.findMany({
       where: {
         status: "ACTIVE",
       },
@@ -169,16 +261,10 @@ export async function GET() {
           },
         },
         player: {
-          include: {
-            externalStat: {
-              select: {
-                kpm180: true,
-                duelStrength180: true,
-                sourceFetchedAt: true,
-                fetchStatus: true,
-                fetchError: true,
-              },
-            },
+          select: {
+            id: true,
+            steamId64: true,
+            displayName: true,
           },
         },
       },
@@ -192,151 +278,78 @@ export async function GET() {
           submittedAt: "asc",
         },
       ],
-    }),
-  ]);
+    });
 
-  return NextResponse.json({
-    latestRun: serializeRun(latestRun),
-    players: buildTournamentPlayerRows(rosterEntries, latestRun),
-  });
-}
-
-export async function POST() {
-  await prisma.statsRun.updateMany({
-    where: {
-      status: StatsRunStatus.RUNNING,
-      startedAt: {
-        lt: new Date(Date.now() - 1000 * 60 * 60 * 2),
-      },
-    },
-    data: {
-      status: StatsRunStatus.FAILED,
-      finishedAt: new Date(),
-    },
-  });
-
-  const runningRun = await prisma.statsRun.findFirst({
-    where: {
-      status: StatsRunStatus.RUNNING,
-    },
-    orderBy: {
-      startedAt: "desc",
-    },
-    include: {
-      items: {
-        orderBy: {
-          position: "asc",
-        },
-      },
-    },
-  });
-
-  if (runningRun) {
-    return NextResponse.json(
+    const playersById = new Map<
+      string,
       {
-        error: "A stats refresh is already running.",
-        latestRun: serializeRun(runningRun),
-      },
-      { status: 409 },
-    );
-  }
-
-  const rosterEntries = await prisma.rosterEntry.findMany({
-    where: {
-      status: "ACTIVE",
-    },
-    include: {
-      team: {
-        select: {
-          name: true,
-        },
-      },
-      player: {
-        select: {
-          id: true,
-          steamId64: true,
-          displayName: true,
-        },
-      },
-    },
-    orderBy: [
-      {
-        team: {
-          name: "asc",
-        },
-      },
-      {
-        submittedAt: "asc",
-      },
-    ],
-  });
-
-  const playersById = new Map<
-    string,
-    {
-      playerId: string;
-      steamId64: string;
-      displayName: string | null;
-      teamNames: string[];
-    }
-  >();
-
-  for (const entry of rosterEntries) {
-    const existing = playersById.get(entry.player.id);
-    if (existing) {
-      if (!existing.teamNames.includes(entry.team.name)) {
-        existing.teamNames.push(entry.team.name);
+        playerId: string;
+        steamId64: string;
+        displayName: string | null;
+        teamNames: string[];
       }
-      continue;
+    >();
+
+    for (const entry of rosterEntries) {
+      const existing = playersById.get(entry.player.id);
+      if (existing) {
+        if (!existing.teamNames.includes(entry.team.name)) {
+          existing.teamNames.push(entry.team.name);
+        }
+        continue;
+      }
+
+      playersById.set(entry.player.id, {
+        playerId: entry.player.id,
+        steamId64: entry.player.steamId64,
+        displayName: entry.player.displayName,
+        teamNames: [entry.team.name],
+      });
     }
 
-    playersById.set(entry.player.id, {
-      playerId: entry.player.id,
-      steamId64: entry.player.steamId64,
-      displayName: entry.player.displayName,
-      teamNames: [entry.team.name],
-    });
-  }
+    const players = Array.from(playersById.values());
+    if (players.length === 0) {
+      return NextResponse.json({ error: "No active roster players were found." }, { status: 400 });
+    }
 
-  const players = Array.from(playersById.values());
-  if (players.length === 0) {
-    return NextResponse.json({ error: "No active roster players were found." }, { status: 400 });
-  }
+    const run = await prisma.$transaction(async (tx) => {
+      const createdRun = await tx.statsRun.create({
+        data: {
+          requestedBy: process.env.STATS_REQUESTED_BY?.trim() || process.env.BASIC_AUTH_USERNAME?.trim() || "MILK",
+          totalPlayers: players.length,
+        },
+      });
 
-  const run = await prisma.$transaction(async (tx) => {
-    const createdRun = await tx.statsRun.create({
-      data: {
-        requestedBy: process.env.STATS_REQUESTED_BY?.trim() || process.env.BASIC_AUTH_USERNAME?.trim() || "MILK",
-        totalPlayers: players.length,
-      },
-    });
+      await tx.statsRunItem.createMany({
+        data: players.map((player, index) => ({
+          runId: createdRun.id,
+          playerId: player.playerId,
+          steamId64: player.steamId64,
+          displayName: player.displayName,
+          teamNames: player.teamNames,
+          position: index + 1,
+        })),
+      });
 
-    await tx.statsRunItem.createMany({
-      data: players.map((player, index) => ({
-        runId: createdRun.id,
-        playerId: player.playerId,
-        steamId64: player.steamId64,
-        displayName: player.displayName,
-        teamNames: player.teamNames,
-        position: index + 1,
-      })),
-    });
-
-    return tx.statsRun.findUniqueOrThrow({
-      where: {
-        id: createdRun.id,
-      },
-      include: {
-        items: {
-          orderBy: {
-            position: "asc",
+      return tx.statsRun.findUniqueOrThrow({
+        where: {
+          id: createdRun.id,
+        },
+        include: {
+          items: {
+            orderBy: {
+              position: "asc",
+            },
           },
         },
-      },
+      });
     });
-  });
 
-  startStatsRunProcessing(run.id);
+    startStatsRunProcessing(run.id);
 
-  return NextResponse.json({ latestRun: serializeRun(run) }, { status: 201 });
+    return NextResponse.json({ latestRun: serializeRun(run) }, { status: 201 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to start stats run.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
