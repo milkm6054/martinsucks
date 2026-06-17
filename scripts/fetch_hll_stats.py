@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,6 +20,10 @@ def build_profile_url(steam_id64: str) -> str:
 
 
 def detect_browser_executable() -> str | None:
+    configured = os.environ.get("BROWSER_EXECUTABLE_PATH", "").strip()
+    if configured and Path(configured).exists():
+        return configured
+
     for candidate in COMMON_EXECUTABLES:
         if candidate.exists():
             return str(candidate)
@@ -39,21 +44,25 @@ def extract_area_raw_value(raw_text: str, area_name: str) -> float | None:
 
 def fetch_stats(steam_id64: str) -> dict[str, object]:
     executable_path = detect_browser_executable()
-    if not executable_path:
-        raise RuntimeError("No Chrome or Edge executable was found on this machine.")
-
     source_url = build_profile_url(steam_id64)
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(
-            headless=True,
-            executable_path=executable_path,
-            channel="chrome" if "chrome.exe" in executable_path.lower() else None,
-            args=[
+        launch_kwargs = {
+            "headless": True,
+            "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-first-run",
                 "--no-default-browser-check",
             ],
+        }
+
+        if executable_path:
+            launch_kwargs["executable_path"] = executable_path
+            if "chrome.exe" in executable_path.lower():
+                launch_kwargs["channel"] = "chrome"
+
+        browser = playwright.chromium.launch(
+            **launch_kwargs,
         )
 
         context = browser.new_context(
