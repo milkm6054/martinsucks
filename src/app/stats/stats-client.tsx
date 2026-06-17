@@ -12,11 +12,11 @@ type PlayerRow = {
     duelStrength180: number | null;
     mainRole: string | null;
     fetchedAt: string | null;
-    status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+    status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "UNKNOWN";
     error: string | null;
   } | null;
   runItem: {
-    status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+    status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED" | "UNKNOWN";
     kpm180: number | null;
     duelStrength180: number | null;
     mainRole: string | null;

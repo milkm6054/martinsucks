@@ -1,0 +1,1 @@
+ALTER TYPE "PlayerStatsFetchStatus" ADD VALUE IF NOT EXISTS 'UNKNOWN';

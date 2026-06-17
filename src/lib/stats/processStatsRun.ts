@@ -34,6 +34,15 @@ function isRetryableInfrastructureError(message: string): boolean {
   );
 }
 
+function isUnknownProfileError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("unable to extract stats. page title was: hllrecords") ||
+    normalized.includes("page title was: hllrecords") ||
+    normalized.includes("hell let loose com")
+  );
+}
+
 async function requeueItemsForRetry(
   items: Array<{ id: string }>,
   message: string,
@@ -154,6 +163,54 @@ async function markItemFailed(
   ]);
 }
 
+async function markItemUnknown(
+  runId: string,
+  item: { id: string; playerId: string; steamId64: string },
+  message: string,
+) {
+  await prisma.$transaction([
+    prisma.playerExternalStat.upsert({
+      where: {
+        playerId: item.playerId,
+      },
+      update: {
+        kpm180: null,
+        duelStrength180: null,
+        mainRole: null,
+        sourceUrl: buildSourceUrl(item.steamId64),
+        sourceFetchedAt: new Date(),
+        fetchStatus: PlayerStatsFetchStatus.UNKNOWN,
+        fetchError: message,
+      },
+      create: {
+        playerId: item.playerId,
+        mainRole: null,
+        sourceUrl: buildSourceUrl(item.steamId64),
+        sourceFetchedAt: new Date(),
+        fetchStatus: PlayerStatsFetchStatus.UNKNOWN,
+        fetchError: message,
+      },
+    }),
+    prisma.statsRunItem.update({
+      where: { id: item.id },
+      data: {
+        status: PlayerStatsFetchStatus.UNKNOWN,
+        mainRole: null,
+        error: message,
+        finishedAt: new Date(),
+      },
+    }),
+    prisma.statsRun.update({
+      where: { id: runId },
+      data: {
+        processedPlayers: {
+          increment: 1,
+        },
+      },
+    }),
+  ]);
+}
+
 export function startStatsRunProcessing(runId: string): void {
   if (activeRunIds.has(runId)) {
     return;
@@ -225,7 +282,13 @@ async function processStatsRun(runId: string): Promise<void> {
           const result = statsBySteamId.get(item.steamId64);
 
           if (result instanceof Error || !result) {
-            await markItemFailed(runId, item, result?.message || "No scraper result was returned.");
+            const message = result?.message || "No scraper result was returned.";
+            if (isUnknownProfileError(message)) {
+              await markItemUnknown(runId, item, message);
+              continue;
+            }
+
+            await markItemFailed(runId, item, message);
             continue;
           }
 
@@ -255,6 +318,11 @@ async function processStatsRun(runId: string): Promise<void> {
         consecutiveRetryableFailures = 0;
 
         for (const item of items) {
+          if (isUnknownProfileError(message)) {
+            await markItemUnknown(runId, item, message);
+            continue;
+          }
+
           await markItemFailed(runId, item, message);
         }
       }
