@@ -1,0 +1,2 @@
+ALTER TABLE "PlayerExternalStat"
+ADD COLUMN IF NOT EXISTS "mainRole" TEXT;

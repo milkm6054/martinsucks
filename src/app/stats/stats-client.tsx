@@ -10,6 +10,7 @@ type PlayerRow = {
   cachedStat: {
     kpm180: number | null;
     duelStrength180: number | null;
+    mainRole: string | null;
     fetchedAt: string | null;
     status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
     error: string | null;
@@ -18,6 +19,7 @@ type PlayerRow = {
     status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
     kpm180: number | null;
     duelStrength180: number | null;
+    mainRole: string | null;
     error: string | null;
     startedAt: string | null;
     finishedAt: string | null;
@@ -84,6 +86,10 @@ function getRowKpm(row: PlayerRow): number | null {
 
 function getRowDuelStrength(row: PlayerRow): number | null {
   return row.runItem?.duelStrength180 ?? row.cachedStat?.duelStrength180 ?? null;
+}
+
+function getRowMainRole(row: PlayerRow): string {
+  return row.runItem?.mainRole ?? row.cachedStat?.mainRole ?? "-";
 }
 
 function getRowError(row: PlayerRow): string | null {
@@ -340,6 +346,7 @@ export function StatsClient() {
               <th className="px-4 py-3">Team</th>
               <th className="px-4 py-3">Player</th>
               <th className="px-4 py-3">Steam ID</th>
+              <th className="px-4 py-3">MainRole</th>
               <th className="px-4 py-3">KPM 180d</th>
               <th className="px-4 py-3">Duel Strength 180d</th>
               <th className="px-4 py-3">Status</th>
@@ -360,6 +367,7 @@ export function StatsClient() {
                 <td className="px-4 py-3">{row.teamNames.join(", ")}</td>
                 <td className="px-4 py-3">{row.displayName || "-"}</td>
                 <td className="px-4 py-3 font-mono text-xs">{row.steamId64}</td>
+                <td className="px-4 py-3">{getRowMainRole(row)}</td>
                 <td className="px-4 py-3">{formatValue(getRowKpm(row))}</td>
                 <td className="px-4 py-3">{formatValue(getRowDuelStrength(row))}</td>
                 <td className="px-4 py-3">{getRowStatus(row)}</td>
@@ -371,7 +379,7 @@ export function StatsClient() {
             ))}
             {!loading && (data?.players ?? []).length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-6 text-center muted-copy">
+                <td colSpan={9} className="px-4 py-6 text-center muted-copy">
                   No active roster players found.
                 </td>
               </tr>

@@ -83,6 +83,7 @@ model PlayerExternalStat {
   playerId        String                 @unique
   kpm180          Float?
   duelStrength180 Float?
+  mainRole        String?
   sourceUrl       String?
   sourceFetchedAt DateTime?
   fetchStatus     PlayerStatsFetchStatus @default(PENDING)
@@ -123,6 +124,7 @@ model StatsRunItem {
   status          PlayerStatsFetchStatus @default(PENDING)
   kpm180          Float?
   duelStrength180 Float?
+  mainRole        String?
   error           String?
   startedAt       DateTime?
   finishedAt      DateTime?

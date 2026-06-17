@@ -78,6 +78,7 @@ async function processStatsRun(runId: string): Promise<void> {
             update: {
               kpm180: stats.kpm180,
               duelStrength180: stats.duelStrength180,
+              mainRole: stats.mainRole,
               sourceUrl: stats.sourceUrl,
               sourceFetchedAt: new Date(),
               fetchStatus: PlayerStatsFetchStatus.COMPLETED,
@@ -87,6 +88,7 @@ async function processStatsRun(runId: string): Promise<void> {
               playerId: item.playerId,
               kpm180: stats.kpm180,
               duelStrength180: stats.duelStrength180,
+              mainRole: stats.mainRole,
               sourceUrl: stats.sourceUrl,
               sourceFetchedAt: new Date(),
               fetchStatus: PlayerStatsFetchStatus.COMPLETED,
@@ -98,6 +100,7 @@ async function processStatsRun(runId: string): Promise<void> {
               status: PlayerStatsFetchStatus.COMPLETED,
               kpm180: stats.kpm180,
               duelStrength180: stats.duelStrength180,
+              mainRole: stats.mainRole,
               error: null,
               finishedAt: new Date(),
             },
@@ -125,6 +128,7 @@ async function processStatsRun(runId: string): Promise<void> {
             update: {
               kpm180: null,
               duelStrength180: null,
+              mainRole: null,
               sourceUrl: item.steamId64 ? `https://hllrecords.com/profiles/${item.steamId64}?period=180d&comp=` : null,
               sourceFetchedAt: new Date(),
               fetchStatus: PlayerStatsFetchStatus.FAILED,
@@ -132,6 +136,7 @@ async function processStatsRun(runId: string): Promise<void> {
             },
             create: {
               playerId: item.playerId,
+              mainRole: null,
               sourceUrl: item.steamId64 ? `https://hllrecords.com/profiles/${item.steamId64}?period=180d&comp=` : null,
               sourceFetchedAt: new Date(),
               fetchStatus: PlayerStatsFetchStatus.FAILED,
@@ -142,6 +147,7 @@ async function processStatsRun(runId: string): Promise<void> {
             where: { id: item.id },
             data: {
               status: PlayerStatsFetchStatus.FAILED,
+              mainRole: null,
               error: message,
               finishedAt: new Date(),
             },

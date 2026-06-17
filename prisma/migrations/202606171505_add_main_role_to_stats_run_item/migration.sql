@@ -1,0 +1,2 @@
+ALTER TABLE "StatsRunItem"
+ADD COLUMN IF NOT EXISTS "mainRole" TEXT;

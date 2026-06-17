@@ -41,6 +41,7 @@ function serializeRun(run: LatestRunWithItems | null) {
       status: item.status,
       kpm180: item.kpm180,
       duelStrength180: item.duelStrength180,
+      mainRole: item.mainRole,
       error: item.error,
       startedAt: item.startedAt?.toISOString() ?? null,
       finishedAt: item.finishedAt?.toISOString() ?? null,
@@ -57,6 +58,7 @@ function buildTournamentPlayerRows(
       externalStat: {
         kpm180: number | null;
         duelStrength180: number | null;
+        mainRole: string | null;
         sourceFetchedAt: Date | null;
         fetchStatus: PlayerStatsFetchStatus;
         fetchError: string | null;
@@ -79,6 +81,7 @@ function buildTournamentPlayerRows(
       cachedStat: {
         kpm180: number | null;
         duelStrength180: number | null;
+        mainRole: string | null;
         fetchedAt: string | null;
         status: PlayerStatsFetchStatus;
         error: string | null;
@@ -88,6 +91,7 @@ function buildTournamentPlayerRows(
             status: PlayerStatsFetchStatus;
             kpm180: number | null;
             duelStrength180: number | null;
+            mainRole: string | null;
             error: string | null;
             startedAt: string | null;
             finishedAt: string | null;
@@ -115,6 +119,7 @@ function buildTournamentPlayerRows(
         ? {
             kpm180: entry.player.externalStat.kpm180,
             duelStrength180: entry.player.externalStat.duelStrength180,
+            mainRole: entry.player.externalStat.mainRole,
             fetchedAt: entry.player.externalStat.sourceFetchedAt?.toISOString() ?? null,
             status: entry.player.externalStat.fetchStatus,
             error: entry.player.externalStat.fetchError,
@@ -125,6 +130,7 @@ function buildTournamentPlayerRows(
             status: runItem.status,
             kpm180: runItem.kpm180,
             duelStrength180: runItem.duelStrength180,
+            mainRole: runItem.mainRole,
             error: runItem.error,
             startedAt: runItem.startedAt?.toISOString() ?? null,
             finishedAt: runItem.finishedAt?.toISOString() ?? null,
@@ -284,6 +290,7 @@ export async function GET() {
                 select: {
                   kpm180: true,
                   duelStrength180: true,
+                  mainRole: true,
                   sourceFetchedAt: true,
                   fetchStatus: true,
                   fetchError: true,

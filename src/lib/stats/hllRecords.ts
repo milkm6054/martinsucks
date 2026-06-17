@@ -12,6 +12,7 @@ type PythonFetchResult = {
   pageTitle?: string;
   kpm180: number | null;
   duelStrength180: number | null;
+  mainRole?: string | null;
   error?: string;
 };
 
@@ -19,6 +20,7 @@ export async function fetchHllRecordStats(steamId64: string): Promise<{
   sourceUrl: string;
   kpm180: number | null;
   duelStrength180: number | null;
+  mainRole: string | null;
 }> {
   const scriptPath = path.join(process.cwd(), "scripts", "fetch_hll_stats.py");
   let rawOutput = "";
@@ -76,5 +78,6 @@ export async function fetchHllRecordStats(steamId64: string): Promise<{
     sourceUrl: parsed.sourceUrl,
     kpm180: parsed.kpm180,
     duelStrength180: parsed.duelStrength180,
+    mainRole: parsed.mainRole ?? null,
   };
 }

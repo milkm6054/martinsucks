@@ -14,6 +14,16 @@ COMMON_EXECUTABLES = [
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
 ]
 
+ROLE_TO_BUCKET = {
+    "Infantry": "Infantry",
+    "Machine Gunner": "Infantry",
+    "Sniper": "Infantry",
+    "Armor": "Armor",
+    "Tanker": "Armor",
+    "Tank Commander": "Armor",
+    "Crewman": "Armor",
+}
+
 
 def build_profile_url(steam_id64: str) -> str:
     return f"{BASE_PROFILE_URL}/{steam_id64}?period=180d&comp="
@@ -40,6 +50,62 @@ def extract_area_raw_value(raw_text: str, area_name: str) -> float | None:
     if not match:
         return None
     return float(match.group(1))
+
+
+def extract_role_percentages(page_html: str) -> dict[str, float]:
+    role_percents: dict[str, float] = {}
+
+    for role_name in ROLE_TO_BUCKET.keys():
+        pattern = re.compile(
+            rf"<div>\s*<div>{re.escape(role_name)}</div>[\s\S]{{0,700}}?"
+            r'barValue">\s*(\d+(?:\.\d+)?)(?:<!--\s*-->\s*)?%\s*</div>',
+            flags=re.IGNORECASE,
+        )
+        match = pattern.search(page_html)
+        if match:
+            role_percents[role_name] = float(match.group(1))
+
+    if role_percents:
+        return role_percents
+
+    role_names = "|".join(re.escape(role) for role in ROLE_TO_BUCKET.keys())
+    quote = r'(?:\\"|")'
+    pattern = re.compile(
+        rf"{quote}children{quote}\s*:\s*{quote}(?P<role>{role_names}){quote}"
+        r"[\s\S]{0,400}?"
+        rf"{quote}children{quote}\s*:\s*\[(?P<pct>\d+(?:\.\d+)?),\s*{quote}%{quote}\]"
+    )
+
+    for match in pattern.finditer(page_html):
+        role = match.group("role")
+        pct = float(match.group("pct"))
+        if role not in role_percents or pct > role_percents[role]:
+            role_percents[role] = pct
+
+    return role_percents
+
+
+def determine_main_role(role_percents: dict[str, float]) -> str | None:
+    bucket_scores: dict[str, float] = {
+        "Infantry": 0.0,
+        "Armor": 0.0,
+    }
+
+    for role_name, pct in role_percents.items():
+        bucket = ROLE_TO_BUCKET.get(role_name)
+        if not bucket:
+            continue
+        bucket_scores[bucket] = max(bucket_scores[bucket], pct)
+
+    top_score = max(bucket_scores.values()) if bucket_scores else 0
+    if top_score <= 0:
+        return None
+
+    for bucket in ["Infantry", "Armor"]:
+        if bucket_scores[bucket] == top_score:
+            return bucket
+
+    return None
 
 
 def fetch_stats(steam_id64: str) -> dict[str, object]:
@@ -97,6 +163,8 @@ window.chrome = { runtime: {} };
 
     kpm_180 = extract_area_raw_value(html, "KPM")
     duel_strength_180 = extract_area_raw_value(html, "Duel strength")
+    role_percents = extract_role_percentages(html)
+    main_role = determine_main_role(role_percents)
 
     if kpm_180 is None and duel_strength_180 is None:
         raise RuntimeError(f"Unable to extract stats. Page title was: {title}")
@@ -106,6 +174,7 @@ window.chrome = { runtime: {} };
         "pageTitle": title,
         "kpm180": kpm_180,
         "duelStrength180": duel_strength_180,
+        "mainRole": main_role,
     }
 
 
