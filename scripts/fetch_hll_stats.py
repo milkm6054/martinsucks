@@ -3,6 +3,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 from playwright.sync_api import sync_playwright
 
@@ -146,98 +147,153 @@ def wait_for_stats_payload(page) -> tuple[str, str]:
 
 
 def fetch_stats(steam_id64: str) -> dict[str, object]:
+    results = fetch_stats_batch([steam_id64])
+    result = results[0]
+    if result.get("error"):
+        raise RuntimeError(str(result["error"]))
+    return result
+
+
+def build_launch_kwargs(executable_path: str | None) -> dict[str, Any]:
+    launch_kwargs: dict[str, Any] = {
+        "headless": True,
+        "args": [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ],
+        "chromium_sandbox": False,
+    }
+
+    if executable_path:
+        launch_kwargs["executable_path"] = executable_path
+        if "chrome.exe" in executable_path.lower():
+            launch_kwargs["channel"] = "chrome"
+
+    return launch_kwargs
+
+
+def create_context(playwright):
     executable_path = detect_browser_executable()
-    source_url = build_profile_url(steam_id64)
+    launch_kwargs = build_launch_kwargs(executable_path)
+    browser = None
+    launch_error = None
 
-    with sync_playwright() as playwright:
-        launch_kwargs = {
-            "headless": True,
-            "args": [
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ],
-            "chromium_sandbox": False,
-        }
+    for attempt in range(2):
+        try:
+            browser = playwright.chromium.launch(**launch_kwargs)
+            break
+        except Exception as exc:
+            launch_error = exc
+            if attempt == 0:
+                continue
+            raise
 
-        if executable_path:
-            launch_kwargs["executable_path"] = executable_path
-            if "chrome.exe" in executable_path.lower():
-                launch_kwargs["channel"] = "chrome"
+    if browser is None:
+        raise RuntimeError(f"Unable to launch browser: {launch_error}")
 
-        browser = None
-        launch_error = None
+    context = browser.new_context(
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/137.0.0.0 Safari/537.36"
+        ),
+        viewport={"width": 1366, "height": 900},
+        locale="en-US",
+    )
 
-        for attempt in range(2):
-            try:
-                browser = playwright.chromium.launch(**launch_kwargs)
-                break
-            except Exception as exc:
-                launch_error = exc
-                if attempt == 0:
-                    continue
-                raise
-
-        if browser is None:
-            raise RuntimeError(f"Unable to launch browser: {launch_error}")
-
-        context = browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/137.0.0.0 Safari/537.36"
-            ),
-            viewport={"width": 1366, "height": 900},
-            locale="en-US",
-        )
-
-        page = context.new_page()
-        page.add_init_script(
-            """
+    page = context.new_page()
+    page.add_init_script(
+        """
 Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
 Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
 Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
 window.chrome = { runtime: {} };
 """
-        )
+    )
 
-        page.goto(source_url, wait_until="domcontentloaded", timeout=60000)
-        title, html = wait_for_stats_payload(page)
+    return browser, context, page
+
+
+def fetch_stats_batch(steam_ids: list[str]) -> list[dict[str, object]]:
+    if not steam_ids:
+        return []
+
+    with sync_playwright() as playwright:
+        browser = None
+        context = None
+        page = None
 
         try:
-            context.close()
+            browser, context, page = create_context(playwright)
+            results: list[dict[str, object]] = []
+
+            for steam_id64 in steam_ids:
+                source_url = build_profile_url(steam_id64)
+
+                try:
+                    page.goto(source_url, wait_until="domcontentloaded", timeout=60000)
+                    title, html = wait_for_stats_payload(page)
+
+                    kpm_180 = extract_area_raw_value(html, "KPM")
+                    duel_strength_180 = extract_area_raw_value(html, "Duel strength")
+                    role_percents = extract_role_percentages(html)
+                    main_role = determine_main_role(role_percents)
+
+                    if kpm_180 is None and duel_strength_180 is None:
+                        raise RuntimeError(f"Unable to extract stats. Page title was: {title}")
+
+                    results.append(
+                        {
+                            "steamId64": steam_id64,
+                            "sourceUrl": source_url,
+                            "pageTitle": title,
+                            "kpm180": kpm_180,
+                            "duelStrength180": duel_strength_180,
+                            "mainRole": main_role,
+                        }
+                    )
+                except Exception as exc:
+                    results.append(
+                        {
+                            "steamId64": steam_id64,
+                            "sourceUrl": source_url,
+                            "kpm180": None,
+                            "duelStrength180": None,
+                            "mainRole": None,
+                            "error": str(exc),
+                        }
+                    )
+
+            return results
         finally:
-            browser.close()
-
-    kpm_180 = extract_area_raw_value(html, "KPM")
-    duel_strength_180 = extract_area_raw_value(html, "Duel strength")
-    role_percents = extract_role_percentages(html)
-    main_role = determine_main_role(role_percents)
-
-    if kpm_180 is None and duel_strength_180 is None:
-        raise RuntimeError(f"Unable to extract stats. Page title was: {title}")
-
-    return {
-        "sourceUrl": source_url,
-        "pageTitle": title,
-        "kpm180": kpm_180,
-        "duelStrength180": duel_strength_180,
-        "mainRole": main_role,
-    }
+            if context is not None:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "Steam ID is required."}))
+        print(json.dumps({"error": "At least one Steam ID is required."}))
         return 1
 
-    steam_id64 = sys.argv[1].strip()
+    steam_ids = [value.strip() for value in sys.argv[1:] if value.strip()]
 
     try:
-        result = fetch_stats(steam_id64)
+        if len(steam_ids) == 1:
+            result = fetch_stats(steam_ids[0])
+        else:
+            result = fetch_stats_batch(steam_ids)
         print(json.dumps(result))
         return 0
     except Exception as exc:

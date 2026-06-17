@@ -246,12 +246,18 @@ async function loadActiveTournamentPlayers() {
   return Array.from(playersById.values());
 }
 
-async function createStatsRunFromActivePlayers() {
-  const players = await loadActiveTournamentPlayers();
+async function createStatsRunForPlayers(
+  players: Array<{
+    playerId: string;
+    steamId64: string;
+    displayName: string | null;
+    teamNames: string[];
+  }>,
+) {
   if (players.length === 0) {
     return {
       ok: false as const,
-      response: NextResponse.json({ error: "No active roster players were found." }, { status: 400 }),
+      response: NextResponse.json({ error: "No eligible roster players were found." }, { status: 400 }),
     };
   }
 
@@ -292,6 +298,72 @@ async function createStatsRunFromActivePlayers() {
     ok: true as const,
     run,
   };
+}
+
+async function createStatsRunFromActivePlayers() {
+  const players = await loadActiveTournamentPlayers();
+  if (players.length === 0) {
+    return {
+      ok: false as const,
+      response: NextResponse.json({ error: "No active roster players were found." }, { status: 400 }),
+    };
+  }
+
+  return createStatsRunForPlayers(players);
+}
+
+async function createRetryRunFromPreviousRun(
+  run: LatestRunWithItems,
+  mode: "retry" | "retryAll",
+) {
+  const activePlayers = await loadActiveTournamentPlayers();
+  const activePlayersById = new Map(activePlayers.map((player) => [player.playerId, player]));
+
+  const eligibleStatuses =
+    mode === "retry"
+      ? new Set<PlayerStatsFetchStatus>([PlayerStatsFetchStatus.PENDING, PlayerStatsFetchStatus.FAILED])
+      : null;
+
+  const players = run.items
+    .filter((item) => {
+      if (!activePlayersById.has(item.playerId)) {
+        return false;
+      }
+
+      if (!eligibleStatuses) {
+        return true;
+      }
+
+      return eligibleStatuses.has(item.status);
+    })
+    .map((item) => activePlayersById.get(item.playerId))
+    .filter(
+      (
+        player,
+      ): player is {
+        playerId: string;
+        steamId64: string;
+        displayName: string | null;
+        teamNames: string[];
+      } => Boolean(player),
+    );
+
+  if (players.length === 0) {
+    return {
+      ok: false as const,
+      response: NextResponse.json(
+        {
+          error:
+            mode === "retry"
+              ? "There are no pending or failed players to retry."
+              : "There are no active players available for a full retry.",
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  return createStatsRunForPlayers(players);
 }
 
 export async function GET() {
@@ -420,7 +492,7 @@ export async function POST() {
 export async function PATCH(request: Request) {
   try {
     const body = (await request.json()) as {
-      action?: "pause" | "resume" | "restart";
+      action?: "pause" | "resume" | "retry" | "retryAll";
       runId?: string;
     };
 
@@ -428,8 +500,8 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "runId is required." }, { status: 400 });
     }
 
-    if (body.action !== "pause" && body.action !== "resume" && body.action !== "restart") {
-      return NextResponse.json({ error: "action must be pause, resume or restart." }, { status: 400 });
+    if (body.action !== "pause" && body.action !== "resume" && body.action !== "retry" && body.action !== "retryAll") {
+      return NextResponse.json({ error: "action must be pause, resume, retry or retryAll." }, { status: 400 });
     }
 
     const run = await prisma.statsRun.findUnique({
@@ -471,16 +543,8 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ latestRun: serializeRun(pausedRun) });
     }
 
-    if (body.action === "restart") {
+    if (body.action === "retry" || body.action === "retryAll") {
       if (run.status === StatsRunStatus.RUNNING) {
-        await prisma.statsRun.update({
-          where: { id: run.id },
-          data: {
-            status: StatsRunStatus.FAILED,
-            finishedAt: new Date(),
-          },
-        });
-      } else if (run.status === StatsRunStatus.PAUSED) {
         await prisma.statsRun.update({
           where: { id: run.id },
           data: {
@@ -490,7 +554,17 @@ export async function PATCH(request: Request) {
         });
       }
 
-      const createResult = await createStatsRunFromActivePlayers();
+      if (run.status === StatsRunStatus.PAUSED) {
+        await prisma.statsRun.update({
+          where: { id: run.id },
+          data: {
+            status: StatsRunStatus.FAILED,
+            finishedAt: new Date(),
+          },
+        });
+      }
+
+      const createResult = await createRetryRunFromPreviousRun(run, body.action);
       if (!createResult.ok) {
         return createResult.response;
       }

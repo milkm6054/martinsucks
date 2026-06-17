@@ -222,15 +222,24 @@ export function StatsClient() {
     }
   }
 
-  async function updateRun(action: "pause" | "resume" | "restart") {
+  async function updateRun(action: "pause" | "resume" | "retry" | "retryAll") {
     if (!data?.latestRun) {
       return;
     }
 
     if (
-      action === "restart" &&
+      action === "retryAll" &&
       !window.confirm(
-        "Restart the scrape and queue every player again? This will start a fresh full run.",
+        "Retry every player from scratch? This will start a fresh full run for the whole tournament.",
+      )
+    ) {
+      return;
+    }
+
+    if (
+      action === "retry" &&
+      !window.confirm(
+        "Retry only players that are still pending or failed? Completed players will be skipped.",
       )
     ) {
       return;
@@ -262,7 +271,9 @@ export function StatsClient() {
           ? "Stats refresh paused."
           : action === "resume"
             ? "Stats refresh resumed."
-            : "Stats refresh restarted from the beginning.",
+            : action === "retry"
+              ? "Retry started for pending and failed players."
+              : "Full retry started for all players.",
       );
       setData((current) => ({
         latestRun: payload.latestRun,
@@ -300,14 +311,19 @@ export function StatsClient() {
               </button>
             ) : null}
             {data?.latestRun ? (
-              <button className="px-4 py-2" onClick={() => updateRun("restart")} disabled={busy}>
-                Restart
-              </button>
-            ) : null}
-            {data?.latestRun?.status === "PAUSED" ? (
-              <button className="px-4 py-2" onClick={() => updateRun("resume")} disabled={busy}>
-                Resume
-              </button>
+              <>
+                <button className="px-4 py-2" onClick={() => updateRun("retry")} disabled={busy}>
+                  Retry
+                </button>
+                <button className="px-4 py-2" onClick={() => updateRun("retryAll")} disabled={busy}>
+                  Retry all
+                </button>
+                {data?.latestRun?.status === "PAUSED" ? (
+                  <button className="px-4 py-2" onClick={() => updateRun("resume")} disabled={busy}>
+                    Resume
+                  </button>
+                ) : null}
+              </>
             ) : null}
           </div>
         </div>
