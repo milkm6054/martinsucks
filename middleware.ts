@@ -11,6 +11,11 @@ function unauthorizedResponse() {
 }
 
 export function middleware(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  if (pathname === "/" || pathname === "/healthz") {
+    return NextResponse.next();
+  }
+
   const username = process.env.BASIC_AUTH_USERNAME?.trim();
   const password = process.env.BASIC_AUTH_PASSWORD?.trim();
 
@@ -41,5 +46,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|healthz).*)"],
 };
