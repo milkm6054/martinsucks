@@ -121,12 +121,25 @@ function getRowError(row: PlayerRow): string | null {
   return row.runItem?.error ?? row.cachedStat?.error ?? null;
 }
 
+function getPrimaryTeam(row: PlayerRow): string {
+  return row.teamNames[0] || "Unknown";
+}
+
+function getNormalizedMainRole(row: PlayerRow): string | null {
+  const role = getRowMainRole(row);
+  return role === "-" ? null : role;
+}
+
 export function StatsClient() {
   const [data, setData] = useState<StatsResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [activeTab, setActiveTab] = useState<"runner" | "leaderboards">("runner");
+  const [playerSearch, setPlayerSearch] = useState("");
+  const [playerMetric, setPlayerMetric] = useState<"kpm" | "duelStrength">("kpm");
+  const [teamMetric, setTeamMetric] = useState<"kpm" | "duelStrength">("kpm");
 
   const loadStats = useCallback(async () => {
     const response = await fetch("/api/stats", { cache: "no-store" });
@@ -191,6 +204,99 @@ export function StatsClient() {
       estimatedCompletionAt: latestRun?.estimatedCompletionAt ?? null,
     };
   }, [data]);
+
+  const infantryPlayers = useMemo(() => {
+    return (data?.players ?? [])
+      .map((row) => ({
+        playerId: row.playerId,
+        player: row.displayName || "-",
+        team: getPrimaryTeam(row),
+        steamId64: row.steamId64,
+        kpm180: getRowKpm(row),
+        duelStrength180: getRowDuelStrength(row),
+        mainRole: getNormalizedMainRole(row),
+        status: getRowStatus(row),
+      }))
+      .filter((row) => row.mainRole === "Infantry");
+  }, [data]);
+
+  const filteredInfantryPlayers = useMemo(() => {
+    const query = playerSearch.trim().toLowerCase();
+    const filtered = infantryPlayers.filter((row) => {
+      if (!query) {
+        return true;
+      }
+
+      return row.player.toLowerCase().includes(query);
+    });
+
+    return filtered.sort((left, right) => {
+      const leftMetric = playerMetric === "kpm" ? left.kpm180 ?? -1 : left.duelStrength180 ?? -1;
+      const rightMetric = playerMetric === "kpm" ? right.kpm180 ?? -1 : right.duelStrength180 ?? -1;
+
+      if (leftMetric !== rightMetric) {
+        return rightMetric - leftMetric;
+      }
+
+      return left.player.localeCompare(right.player);
+    });
+  }, [infantryPlayers, playerMetric, playerSearch]);
+
+  const infantryTeamRankings = useMemo(() => {
+    const teamMap = new Map<
+      string,
+      {
+        team: string;
+        infantryPlayers: number;
+        kpmTotal: number;
+        kpmCount: number;
+        duelTotal: number;
+        duelCount: number;
+      }
+    >();
+
+    for (const player of infantryPlayers) {
+      const team = player.team;
+      const existing = teamMap.get(team) ?? {
+        team,
+        infantryPlayers: 0,
+        kpmTotal: 0,
+        kpmCount: 0,
+        duelTotal: 0,
+        duelCount: 0,
+      };
+
+      existing.infantryPlayers += 1;
+      if (typeof player.kpm180 === "number") {
+        existing.kpmTotal += player.kpm180;
+        existing.kpmCount += 1;
+      }
+      if (typeof player.duelStrength180 === "number") {
+        existing.duelTotal += player.duelStrength180;
+        existing.duelCount += 1;
+      }
+
+      teamMap.set(team, existing);
+    }
+
+    return Array.from(teamMap.values())
+      .map((team) => ({
+        team: team.team,
+        infantryPlayers: team.infantryPlayers,
+        averageKpm180: team.kpmCount > 0 ? team.kpmTotal / team.kpmCount : null,
+        averageDuelStrength180: team.duelCount > 0 ? team.duelTotal / team.duelCount : null,
+      }))
+      .sort((left, right) => {
+        const leftMetric = teamMetric === "kpm" ? left.averageKpm180 ?? -1 : left.averageDuelStrength180 ?? -1;
+        const rightMetric = teamMetric === "kpm" ? right.averageKpm180 ?? -1 : right.averageDuelStrength180 ?? -1;
+
+        if (leftMetric !== rightMetric) {
+          return rightMetric - leftMetric;
+        }
+
+        return left.team.localeCompare(right.team);
+      });
+  }, [infantryPlayers, teamMetric]);
 
   async function startRun() {
     setBusy(true);
@@ -331,6 +437,25 @@ export function StatsClient() {
 
   return (
     <section className="space-y-6">
+      <div className="flex flex-wrap gap-2">
+        <button
+          className={activeTab === "runner" ? "primary-button px-4 py-2" : "px-4 py-2"}
+          onClick={() => setActiveTab("runner")}
+          type="button"
+        >
+          Runner
+        </button>
+        <button
+          className={activeTab === "leaderboards" ? "primary-button px-4 py-2" : "px-4 py-2"}
+          onClick={() => setActiveTab("leaderboards")}
+          type="button"
+        >
+          Leaderboards
+        </button>
+      </div>
+
+      {activeTab === "runner" ? (
+        <>
       <div className="surface-card p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -490,6 +615,146 @@ export function StatsClient() {
           </tbody>
         </table>
       </div>
+        </>
+      ) : (
+        <>
+          <section className="surface-card p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-500">Infantry only</p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight">Player leaderboards</h2>
+                <p className="mt-2 text-sm muted-copy">
+                  Rankings below only include players whose cached `MainRole` is `Infantry`.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <input
+                  value={playerSearch}
+                  onChange={(event) => setPlayerSearch(event.target.value)}
+                  placeholder="Search player name"
+                  className="min-w-[240px]"
+                />
+                <div className="flex gap-2">
+                  <button
+                    className={playerMetric === "kpm" ? "primary-button px-4 py-2" : "px-4 py-2"}
+                    onClick={() => setPlayerMetric("kpm")}
+                    type="button"
+                  >
+                    KPM
+                  </button>
+                  <button
+                    className={playerMetric === "duelStrength" ? "primary-button px-4 py-2" : "px-4 py-2"}
+                    onClick={() => setPlayerMetric("duelStrength")}
+                    type="button"
+                  >
+                    Duel strength
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
+            <div className="surface-table">
+              <table className="w-full border-collapse text-left text-sm">
+                <thead>
+                  <tr>
+                    <th className="px-4 py-3">Rank</th>
+                    <th className="px-4 py-3">Player</th>
+                    <th className="px-4 py-3">Team</th>
+                    <th className="px-4 py-3">Steam ID</th>
+                    <th className="px-4 py-3">KPM 180d</th>
+                    <th className="px-4 py-3">Duel Strength 180d</th>
+                    <th className="px-4 py-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredInfantryPlayers.map((row, index) => (
+                    <tr key={row.playerId}>
+                      <td className="px-4 py-3 font-semibold">{index + 1}</td>
+                      <td className="px-4 py-3">{row.player}</td>
+                      <td className="px-4 py-3">{row.team}</td>
+                      <td className="px-4 py-3 font-mono text-xs">{row.steamId64}</td>
+                      <td className="px-4 py-3">{formatValue(row.kpm180)}</td>
+                      <td className="px-4 py-3">{formatValue(row.duelStrength180)}</td>
+                      <td className="px-4 py-3">{row.status}</td>
+                    </tr>
+                  ))}
+                  {filteredInfantryPlayers.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-6 text-center muted-copy">
+                        No infantry players match this search yet.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+
+            <section className="space-y-4">
+              <div className="surface-card p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-500">Infantry only</p>
+                    <h3 className="mt-3 text-xl font-semibold tracking-tight">Team averages</h3>
+                    <p className="mt-2 text-sm muted-copy">
+                      Team ranking uses infantry players only and averages the cached values per team.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className={teamMetric === "kpm" ? "primary-button px-4 py-2" : "px-4 py-2"}
+                      onClick={() => setTeamMetric("kpm")}
+                      type="button"
+                    >
+                      Avg KPM
+                    </button>
+                    <button
+                      className={teamMetric === "duelStrength" ? "primary-button px-4 py-2" : "px-4 py-2"}
+                      onClick={() => setTeamMetric("duelStrength")}
+                      type="button"
+                    >
+                      Avg Duel
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="surface-table">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead>
+                    <tr>
+                      <th className="px-4 py-3">Rank</th>
+                      <th className="px-4 py-3">Team</th>
+                      <th className="px-4 py-3">Inf players</th>
+                      <th className="px-4 py-3">Avg KPM 180d</th>
+                      <th className="px-4 py-3">Avg Duel Strength 180d</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {infantryTeamRankings.map((row, index) => (
+                      <tr key={row.team}>
+                        <td className="px-4 py-3 font-semibold">{index + 1}</td>
+                        <td className="px-4 py-3">{row.team}</td>
+                        <td className="px-4 py-3">{row.infantryPlayers}</td>
+                        <td className="px-4 py-3">{formatValue(row.averageKpm180)}</td>
+                        <td className="px-4 py-3">{formatValue(row.averageDuelStrength180)}</td>
+                      </tr>
+                    ))}
+                    {infantryTeamRankings.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-6 text-center muted-copy">
+                          No infantry team averages available yet.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </>
+      )}
     </section>
   );
 }
