@@ -20,10 +20,11 @@ COPY . .
 
 RUN npx prisma generate
 RUN npm run build
+RUN chmod +x ./docker-start.sh
 
 ENV NODE_ENV=production
 ENV PYTHON_BIN=python3
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "PORT=${PORT:-3000} npx prisma migrate deploy && PORT=${PORT:-3000} npm start"]
+CMD ["./docker-start.sh"]
