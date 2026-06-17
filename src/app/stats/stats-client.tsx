@@ -220,17 +220,8 @@ export function StatsClient() {
       .filter((row) => row.mainRole === "Infantry");
   }, [data]);
 
-  const filteredInfantryPlayers = useMemo(() => {
-    const query = playerSearch.trim().toLowerCase();
-    const filtered = infantryPlayers.filter((row) => {
-      if (!query) {
-        return true;
-      }
-
-      return row.player.toLowerCase().includes(query);
-    });
-
-    return filtered.sort((left, right) => {
+  const rankedInfantryPlayers = useMemo(() => {
+    const ranked = [...infantryPlayers].sort((left, right) => {
       const leftMetric = playerMetric === "kpm" ? left.kpm180 ?? -1 : left.duelStrength180 ?? -1;
       const rightMetric = playerMetric === "kpm" ? right.kpm180 ?? -1 : right.duelStrength180 ?? -1;
 
@@ -240,7 +231,24 @@ export function StatsClient() {
 
       return left.player.localeCompare(right.player);
     });
-  }, [infantryPlayers, playerMetric, playerSearch]);
+
+    return ranked.map((row, index) => ({
+      ...row,
+      overallRank: index + 1,
+    }));
+  }, [infantryPlayers, playerMetric]);
+
+  const filteredInfantryPlayers = useMemo(() => {
+    const query = playerSearch.trim().toLowerCase();
+
+    return rankedInfantryPlayers.filter((row) => {
+      if (!query) {
+        return true;
+      }
+
+      return row.player.toLowerCase().includes(query);
+    });
+  }, [playerSearch, rankedInfantryPlayers]);
 
   const infantryTeamRankings = useMemo(() => {
     const teamMap = new Map<
@@ -671,7 +679,7 @@ export function StatsClient() {
                 <tbody>
                   {filteredInfantryPlayers.map((row, index) => (
                     <tr key={row.playerId}>
-                      <td className="px-4 py-3 font-semibold">{index + 1}</td>
+                      <td className="px-4 py-3 font-semibold">{row.overallRank}</td>
                       <td className="px-4 py-3">{row.player}</td>
                       <td className="px-4 py-3">{row.team}</td>
                       <td className="px-4 py-3 font-mono text-xs">{row.steamId64}</td>
