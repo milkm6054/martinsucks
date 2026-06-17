@@ -189,8 +189,17 @@ export function StatsClient() {
     }
   }
 
-  async function updateRun(action: "pause" | "resume") {
+  async function updateRun(action: "pause" | "resume" | "restart") {
     if (!data?.latestRun) {
+      return;
+    }
+
+    if (
+      action === "restart" &&
+      !window.confirm(
+        "Restart the scrape and queue every player again? This will start a fresh full run.",
+      )
+    ) {
       return;
     }
 
@@ -215,7 +224,13 @@ export function StatsClient() {
         throw new Error(payload.error || `Failed to ${action} stats refresh.`);
       }
 
-      setNotice(action === "pause" ? "Stats refresh paused." : "Stats refresh resumed.");
+      setNotice(
+        action === "pause"
+          ? "Stats refresh paused."
+          : action === "resume"
+            ? "Stats refresh resumed."
+            : "Stats refresh restarted from the beginning.",
+      );
       setData((current) => ({
         latestRun: payload.latestRun,
         players: current?.players ?? [],
@@ -249,6 +264,11 @@ export function StatsClient() {
             {data?.latestRun?.status === "RUNNING" ? (
               <button className="px-4 py-2" onClick={() => updateRun("pause")} disabled={busy}>
                 Pause
+              </button>
+            ) : null}
+            {data?.latestRun ? (
+              <button className="px-4 py-2" onClick={() => updateRun("restart")} disabled={busy}>
+                Restart
               </button>
             ) : null}
             {data?.latestRun?.status === "PAUSED" ? (
