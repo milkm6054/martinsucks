@@ -8,6 +8,9 @@ from playwright.sync_api import sync_playwright
 
 BASE_PROFILE_URL = "https://hllrecords.com/profiles"
 COMMON_EXECUTABLES = [
+    Path("/usr/bin/chromium"),
+    Path("/usr/bin/chromium-browser"),
+    Path("/usr/bin/google-chrome"),
     Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
     Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
@@ -149,9 +152,12 @@ def fetch_stats(steam_id64: str) -> dict[str, object]:
             "headless": True,
             "args": [
                 "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
                 "--no-first-run",
                 "--no-default-browser-check",
             ],
+            "chromium_sandbox": False,
         }
 
         if executable_path:
@@ -159,9 +165,21 @@ def fetch_stats(steam_id64: str) -> dict[str, object]:
             if "chrome.exe" in executable_path.lower():
                 launch_kwargs["channel"] = "chrome"
 
-        browser = playwright.chromium.launch(
-            **launch_kwargs,
-        )
+        browser = None
+        launch_error = None
+
+        for attempt in range(2):
+            try:
+                browser = playwright.chromium.launch(**launch_kwargs)
+                break
+            except Exception as exc:
+                launch_error = exc
+                if attempt == 0:
+                    continue
+                raise
+
+        if browser is None:
+            raise RuntimeError(f"Unable to launch browser: {launch_error}")
 
         context = browser.new_context(
             user_agent=(
@@ -187,8 +205,10 @@ window.chrome = { runtime: {} };
         page.goto(source_url, wait_until="domcontentloaded", timeout=60000)
         title, html = wait_for_stats_payload(page)
 
-        context.close()
-        browser.close()
+        try:
+            context.close()
+        finally:
+            browser.close()
 
     kpm_180 = extract_area_raw_value(html, "KPM")
     duel_strength_180 = extract_area_raw_value(html, "Duel strength")
