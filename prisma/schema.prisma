@@ -36,6 +36,12 @@ enum StatsRunStatus {
   FAILED
 }
 
+enum StatsRunSpeed {
+  SLOW
+  NORMAL
+  FAST
+}
+
 model Team {
   id            String        @id
   name          String        @unique
@@ -99,6 +105,7 @@ model PlayerExternalStat {
 model StatsRun {
   id               String         @id @default(cuid())
   status           StatsRunStatus @default(RUNNING)
+  speedProfile     StatsRunSpeed  @default(FAST)
   requestedBy      String?
   totalPlayers     Int            @default(0)
   processedPlayers Int            @default(0)

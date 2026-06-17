@@ -29,6 +29,7 @@ type PlayerRow = {
 type StatsRun = {
   id: string;
   status: "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED";
+  speedProfile: "SLOW" | "NORMAL" | "FAST";
   requestedBy: string | null;
   totalPlayers: number;
   processedPlayers: number;
@@ -288,6 +289,46 @@ export function StatsClient() {
     }
   }
 
+  async function updateSpeed(action: "speedUp" | "slowDown") {
+    if (!data?.latestRun) {
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/stats", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          action,
+          runId: data.latestRun.id,
+        }),
+      });
+      const payload = await parseApiResponse<StatsResponse>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || `Failed to ${action}.`);
+      }
+
+      setNotice(action === "speedUp" ? "Runner speed increased." : "Runner speed reduced.");
+      setData((current) => ({
+        latestRun: payload.latestRun,
+        players: current?.players ?? [],
+        diagnostics: current?.diagnostics,
+      }));
+      await loadStats();
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : `Failed to ${action}.`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div className="surface-card p-6">
@@ -317,6 +358,12 @@ export function StatsClient() {
                 </button>
                 <button className="px-4 py-2" onClick={() => updateRun("retryAll")} disabled={busy}>
                   Retry all
+                </button>
+                <button className="px-4 py-2" onClick={() => updateSpeed("slowDown")} disabled={busy}>
+                  Slow down
+                </button>
+                <button className="px-4 py-2" onClick={() => updateSpeed("speedUp")} disabled={busy}>
+                  Speed up
                 </button>
                 {data?.latestRun?.status === "PAUSED" ? (
                   <button className="px-4 py-2" onClick={() => updateRun("resume")} disabled={busy}>
@@ -369,7 +416,7 @@ export function StatsClient() {
               <h2 className="text-lg font-semibold tracking-tight">Latest run</h2>
               <p className="text-sm muted-copy">
                 {data.latestRun.status} | started {formatDateTime(data.latestRun.startedAt)} | requested by{" "}
-                {data.latestRun.requestedBy || "Unknown"}
+                {data.latestRun.requestedBy || "Unknown"} | speed {data.latestRun.speedProfile}
               </p>
             </div>
             <p className="text-sm muted-copy">

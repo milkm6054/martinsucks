@@ -1,7 +1,7 @@
-import { PlayerStatsFetchStatus, Prisma, StatsRunStatus } from "@prisma/client";
+import { PlayerStatsFetchStatus, Prisma, StatsRunSpeed, StatsRunStatus } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { startStatsRunProcessing } from "@/lib/stats/processStatsRun";
+import { getNextFasterSpeed, getNextSlowerSpeed, startStatsRunProcessing } from "@/lib/stats/processStatsRun";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +55,7 @@ function serializeRun(run: LatestRunWithItems | null) {
   return {
     id: run.id,
     status: run.status,
+    speedProfile: run.speedProfile,
     requestedBy: run.requestedBy,
     totalPlayers: run.totalPlayers,
     processedPlayers: run.processedPlayers,
@@ -492,7 +493,7 @@ export async function POST() {
 export async function PATCH(request: Request) {
   try {
     const body = (await request.json()) as {
-      action?: "pause" | "resume" | "retry" | "retryAll";
+      action?: "pause" | "resume" | "retry" | "retryAll" | "speedUp" | "slowDown";
       runId?: string;
     };
 
@@ -500,8 +501,15 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "runId is required." }, { status: 400 });
     }
 
-    if (body.action !== "pause" && body.action !== "resume" && body.action !== "retry" && body.action !== "retryAll") {
-      return NextResponse.json({ error: "action must be pause, resume, retry or retryAll." }, { status: 400 });
+    if (
+      body.action !== "pause" &&
+      body.action !== "resume" &&
+      body.action !== "retry" &&
+      body.action !== "retryAll" &&
+      body.action !== "speedUp" &&
+      body.action !== "slowDown"
+    ) {
+      return NextResponse.json({ error: "action must be pause, resume, retry, retryAll, speedUp or slowDown." }, { status: 400 });
     }
 
     const run = await prisma.statsRun.findUnique({
@@ -574,6 +582,35 @@ export async function PATCH(request: Request) {
       return NextResponse.json({
         latestRun: serializeRun(createResult.run),
       });
+    }
+
+    if (body.action === "speedUp" || body.action === "slowDown") {
+      if (run.status !== StatsRunStatus.RUNNING && run.status !== StatsRunStatus.PAUSED) {
+        return NextResponse.json({ error: "Speed can only be changed for running or paused jobs." }, { status: 409 });
+      }
+
+      const nextSpeedProfile =
+        body.action === "speedUp" ? getNextFasterSpeed(run.speedProfile) : getNextSlowerSpeed(run.speedProfile);
+
+      if (!nextSpeedProfile) {
+        return NextResponse.json({ error: `Run is already at ${run.speedProfile.toLowerCase()} speed.` }, { status: 409 });
+      }
+
+      const updatedRun = await prisma.statsRun.update({
+        where: { id: run.id },
+        data: {
+          speedProfile: nextSpeedProfile as StatsRunSpeed,
+        },
+        include: {
+          items: {
+            orderBy: {
+              position: "asc",
+            },
+          },
+        },
+      });
+
+      return NextResponse.json({ latestRun: serializeRun(updatedRun) });
     }
 
     if (run.status !== StatsRunStatus.PAUSED) {

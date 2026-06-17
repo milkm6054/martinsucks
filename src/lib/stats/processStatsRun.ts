@@ -1,15 +1,44 @@
-import { PlayerStatsFetchStatus, StatsRunStatus } from "@prisma/client";
+import { PlayerStatsFetchStatus, StatsRunSpeed, StatsRunStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { fetchHllRecordStatsBatch, type HllRecordStatResult } from "@/lib/stats/hllRecords";
 
-const PLAYER_DELAY_MS = 900;
-const SCRAPE_BATCH_SIZE = 4;
-const BATCH_SIZE = 8;
-const BATCH_PAUSE_MS = 9000;
-const RETRYABLE_FAILURE_COOLDOWN_MS = 60000;
 const MAX_CONSECUTIVE_RETRYABLE_FAILURES = 4;
 
 const activeRunIds = new Set<string>();
+
+type SpeedConfig = {
+  scrapeBatchSize: number;
+  playerDelayMs: number;
+  batchPauseEvery: number;
+  batchPauseMs: number;
+  retryableFailureCooldownMs: number;
+};
+
+const SPEED_ORDER: StatsRunSpeed[] = [StatsRunSpeed.SLOW, StatsRunSpeed.NORMAL, StatsRunSpeed.FAST];
+
+const SPEED_CONFIG: Record<StatsRunSpeed, SpeedConfig> = {
+  SLOW: {
+    scrapeBatchSize: 2,
+    playerDelayMs: 1500,
+    batchPauseEvery: 6,
+    batchPauseMs: 12000,
+    retryableFailureCooldownMs: 90000,
+  },
+  NORMAL: {
+    scrapeBatchSize: 4,
+    playerDelayMs: 900,
+    batchPauseEvery: 8,
+    batchPauseMs: 9000,
+    retryableFailureCooldownMs: 60000,
+  },
+  FAST: {
+    scrapeBatchSize: 6,
+    playerDelayMs: 350,
+    batchPauseEvery: 10,
+    batchPauseMs: 4500,
+    retryableFailureCooldownMs: 30000,
+  },
+};
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -17,6 +46,24 @@ function delay(ms: number): Promise<void> {
 
 function buildSourceUrl(steamId64: string): string | null {
   return steamId64 ? `https://hllrecords.com/profiles/${steamId64}?period=180d&comp=` : null;
+}
+
+function getSpeedConfig(speedProfile: StatsRunSpeed): SpeedConfig {
+  return SPEED_CONFIG[speedProfile] ?? SPEED_CONFIG.NORMAL;
+}
+
+function getNextSlowerSpeedInternal(speedProfile: StatsRunSpeed): StatsRunSpeed | null {
+  const currentIndex = SPEED_ORDER.indexOf(speedProfile);
+  return currentIndex > 0 ? SPEED_ORDER[currentIndex - 1] : null;
+}
+
+export function getNextFasterSpeed(speedProfile: StatsRunSpeed): StatsRunSpeed | null {
+  const currentIndex = SPEED_ORDER.indexOf(speedProfile);
+  return currentIndex >= 0 && currentIndex < SPEED_ORDER.length - 1 ? SPEED_ORDER[currentIndex + 1] : null;
+}
+
+export function getNextSlowerSpeed(speedProfile: StatsRunSpeed): StatsRunSpeed | null {
+  return getNextSlowerSpeedInternal(speedProfile);
 }
 
 function isRetryableInfrastructureError(message: string): boolean {
@@ -43,10 +90,7 @@ function isUnknownProfileError(message: string): boolean {
   );
 }
 
-async function requeueItemsForRetry(
-  items: Array<{ id: string }>,
-  message: string,
-) {
+async function requeueItemsForRetry(items: Array<{ id: string }>, message: string) {
   await prisma.$transaction(
     items.map((item) =>
       prisma.statsRunItem.update({
@@ -237,7 +281,7 @@ async function processStatsRun(runId: string): Promise<void> {
             orderBy: {
               position: "asc",
             },
-            take: SCRAPE_BATCH_SIZE,
+            take: 20,
           },
         },
       });
@@ -254,7 +298,8 @@ async function processStatsRun(runId: string): Promise<void> {
         return;
       }
 
-      const items = run.items;
+      const speedConfig = getSpeedConfig(run.speedProfile);
+      const items = run.items.slice(0, speedConfig.scrapeBatchSize);
       if (items.length === 0) {
         break;
       }
@@ -299,7 +344,21 @@ async function processStatsRun(runId: string): Promise<void> {
 
         if (isRetryableInfrastructureError(message)) {
           consecutiveRetryableFailures += 1;
-          await requeueItemsForRetry(items, `Temporary runner issue. Cooling down before retry. Last error: ${message}`);
+          const slowerSpeed = getNextSlowerSpeedInternal(run.speedProfile);
+
+          if (slowerSpeed) {
+            await prisma.statsRun.update({
+              where: { id: runId },
+              data: {
+                speedProfile: slowerSpeed,
+              },
+            });
+          }
+
+          await requeueItemsForRetry(
+            items,
+            `Temporary runner issue. Cooling down before retry. Last error: ${message}${slowerSpeed ? ` Auto-slowed to ${slowerSpeed}.` : ""}`,
+          );
 
           if (consecutiveRetryableFailures >= MAX_CONSECUTIVE_RETRYABLE_FAILURES) {
             await prisma.statsRun.update({
@@ -311,7 +370,7 @@ async function processStatsRun(runId: string): Promise<void> {
             return;
           }
 
-          await delay(RETRYABLE_FAILURE_COOLDOWN_MS);
+          await delay(speedConfig.retryableFailureCooldownMs);
           continue;
         }
 
@@ -332,6 +391,7 @@ async function processStatsRun(runId: string): Promise<void> {
         select: {
           status: true,
           processedPlayers: true,
+          speedProfile: true,
         },
       });
 
@@ -343,8 +403,9 @@ async function processStatsRun(runId: string): Promise<void> {
         return;
       }
 
-      const completedThisBatch = refreshedRun.processedPlayers % BATCH_SIZE === 0;
-      await delay(completedThisBatch ? BATCH_PAUSE_MS : PLAYER_DELAY_MS);
+      const refreshedSpeedConfig = getSpeedConfig(refreshedRun.speedProfile);
+      const completedThisBatch = refreshedRun.processedPlayers % refreshedSpeedConfig.batchPauseEvery === 0;
+      await delay(completedThisBatch ? refreshedSpeedConfig.batchPauseMs : refreshedSpeedConfig.playerDelayMs);
     }
 
     await prisma.statsRun.update({
