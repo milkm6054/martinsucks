@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AccountAgeRisk {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+  UNKNOWN
+}
+
+enum RosterEntryStatus {
+  ACTIVE
+  REMOVED
+  PENDING
+}
+
+enum PlayerStatsFetchStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum StatsRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Team {
+  id            String        @id
+  name          String        @unique
+  tag           String?
+  logoDataUrl   String?
+  rosterEntries RosterEntry[]
+
+  @@map("Team")
+}
+
+model Player {
+  id                 String              @id
+  steamId64          String              @unique
+  steamId3           String?
+  displayName        String?
+  estimatedCreatedAt DateTime?
+  accountAgeRisk     AccountAgeRisk
+  createdAt          DateTime
+  updatedAt          DateTime
+  rosterEntries      RosterEntry[]
+  externalStat       PlayerExternalStat?
+  statsRunItems      StatsRunItem[]
+
+  @@map("Player")
+}
+
+model RosterEntry {
+  id          String            @id
+  teamId      String
+  playerId    String
+  season      String
+  status      RosterEntryStatus
+  submittedBy String?
+  submittedAt DateTime
+  lockedAt    DateTime?
+  team        Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player      Player            @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, playerId, season])
+  @@index([teamId, season, status])
+  @@map("RosterEntry")
+}
+
+model PlayerExternalStat {
+  id              String                 @id @default(cuid())
+  playerId        String                 @unique
+  kpm180          Float?
+  duelStrength180 Float?
+  sourceUrl       String?
+  sourceFetchedAt DateTime?
+  fetchStatus     PlayerStatsFetchStatus @default(PENDING)
+  fetchError      String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  player          Player                 @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@map("PlayerExternalStat")
+}
+
+model StatsRun {
+  id               String         @id @default(cuid())
+  status           StatsRunStatus @default(RUNNING)
+  requestedBy      String?
+  totalPlayers     Int            @default(0)
+  processedPlayers Int            @default(0)
+  successPlayers   Int            @default(0)
+  failedPlayers    Int            @default(0)
+  startedAt        DateTime       @default(now())
+  finishedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  items            StatsRunItem[]
+
+  @@index([status, startedAt])
+  @@map("StatsRun")
+}
+
+model StatsRunItem {
+  id              String                 @id @default(cuid())
+  runId           String
+  playerId        String
+  steamId64       String
+  displayName     String?
+  teamNames       String[]
+  position        Int
+  status          PlayerStatsFetchStatus @default(PENDING)
+  kpm180          Float?
+  duelStrength180 Float?
+  error           String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  run             StatsRun               @relation(fields: [runId], references: [id], onDelete: Cascade)
+  player          Player                 @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, playerId])
+  @@index([runId, position])
+  @@index([playerId])
+  @@map("StatsRunItem")
+}
