@@ -66,6 +66,8 @@ type HllRecentKillResult = {
   playedAt: string | null;
   sourceOrder: number;
   fetchedAt: string;
+  isFreePlayer: boolean;
+  rosterTeamNames: string[];
 };
 
 type HllRecordsServer = {
@@ -178,6 +180,7 @@ export function StatsClient() {
   const [teamMetric, setTeamMetric] = useState<"kpm" | "duelStrength">("kpm");
   const [newHllRecordsName, setNewHllRecordsName] = useState("");
   const [newHllRecordsUrl, setNewHllRecordsUrl] = useState("");
+  const [expandedHllRecordsServerIds, setExpandedHllRecordsServerIds] = useState<Set<string>>(() => new Set());
 
   const loadStats = useCallback(async () => {
     const response = await fetch("/api/stats", { cache: "no-store" });
@@ -573,6 +576,18 @@ export function StatsClient() {
     }
   }
 
+  function toggleHllRecordsServer(serverId: string) {
+    setExpandedHllRecordsServerIds((current) => {
+      const next = new Set(current);
+      if (next.has(serverId)) {
+        next.delete(serverId);
+      } else {
+        next.add(serverId);
+      }
+      return next;
+    });
+  }
+
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap gap-2">
@@ -945,7 +960,11 @@ export function StatsClient() {
           ) : null}
 
           <div className="space-y-6">
-            {hllRecordsServers.map((server) => (
+            {hllRecordsServers.map((server) => {
+              const isExpanded = expandedHllRecordsServerIds.has(server.id);
+              const freePlayerCount = server.results.filter((result) => result.isFreePlayer).length;
+
+              return (
               <section key={server.id} className="surface-card space-y-4 p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
@@ -961,18 +980,32 @@ export function StatsClient() {
                     <p className="mt-2 text-xs muted-copy">
                       Status {server.fetchStatus} | Last run {formatDateTime(server.lastRunAt)}
                     </p>
+                    <p className="mt-2 text-xs muted-copy">
+                      {server.results.length} gun-based 100+ results |{" "}
+                      <span className="text-emerald-400">{freePlayerCount} free players</span>
+                    </p>
                     {server.fetchError ? <p className="mt-2 text-xs text-red-400">{server.fetchError}</p> : null}
                   </div>
-                  <button
-                    className="px-4 py-2"
-                    type="button"
-                    onClick={() => rerunHllRecordsServer(server.id)}
-                    disabled={rerunningServerId === server.id || hllRecordsBusy}
-                  >
-                    {rerunningServerId === server.id ? "Rerunning..." : "Rerun"}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="px-4 py-2"
+                      type="button"
+                      onClick={() => toggleHllRecordsServer(server.id)}
+                    >
+                      {isExpanded ? "Hide stats" : "Show stats"}
+                    </button>
+                    <button
+                      className="px-4 py-2"
+                      type="button"
+                      onClick={() => rerunHllRecordsServer(server.id)}
+                      disabled={rerunningServerId === server.id || hllRecordsBusy}
+                    >
+                      {rerunningServerId === server.id ? "Rerunning..." : "Rerun"}
+                    </button>
+                  </div>
                 </div>
 
+                {isExpanded ? (
                 <div className="surface-table">
                   <table className="w-full border-collapse text-left text-sm">
                     <thead>
@@ -985,14 +1018,17 @@ export function StatsClient() {
                         <th className="px-4 py-3">Most used</th>
                         <th className="px-4 py-3">Match</th>
                         <th className="px-4 py-3">Steam ID</th>
+                        <th className="px-4 py-3">Roster</th>
                         <th className="px-4 py-3">Profile</th>
                       </tr>
                     </thead>
                     <tbody>
                       {server.results.map((result) => (
-                        <tr key={result.id}>
+                        <tr key={result.id} className={result.isFreePlayer ? "bg-emerald-500/10" : undefined}>
                           <td className="px-4 py-3">{result.sourceOrder}</td>
-                          <td className="px-4 py-3">{result.playerName}</td>
+                          <td className={result.isFreePlayer ? "px-4 py-3 font-semibold text-emerald-300" : "px-4 py-3"}>
+                            {result.playerName}
+                          </td>
                           <td className="px-4 py-3 font-semibold">{result.kills}</td>
                           <td className="px-4 py-3">{formatValue(result.kpm)}</td>
                           <td className="px-4 py-3">{formatValue(result.kd)}</td>
@@ -1004,6 +1040,17 @@ export function StatsClient() {
                             <span className="text-xs muted-copy">{result.playedOn || "-"}</span>
                           </td>
                           <td className="px-4 py-3 font-mono text-xs">{result.steamId || "-"}</td>
+                          <td className="px-4 py-3">
+                            {result.isFreePlayer ? (
+                              <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-1 text-xs font-semibold text-emerald-300">
+                                Free
+                              </span>
+                            ) : result.rosterTeamNames.length > 0 ? (
+                              <span className="text-xs muted-copy">{result.rosterTeamNames.join(", ")}</span>
+                            ) : (
+                              <span className="text-xs muted-copy">Unknown</span>
+                            )}
+                          </td>
                           <td className="px-4 py-3">
                             <a
                               href={result.profileUrl}
@@ -1018,16 +1065,18 @@ export function StatsClient() {
                       ))}
                       {server.results.length === 0 ? (
                         <tr>
-                          <td colSpan={9} className="px-4 py-6 text-center muted-copy">
-                            No recent 100+ kill matches found for this page yet.
+                          <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                            No gun-based recent 100+ kill matches found for this page yet.
                           </td>
                         </tr>
                       ) : null}
                     </tbody>
                   </table>
                 </div>
+                ) : null}
               </section>
-            ))}
+              );
+            })}
           </div>
         </>
       )}
