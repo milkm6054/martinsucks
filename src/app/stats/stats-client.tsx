@@ -60,6 +60,9 @@ type HllRecentKillResult = {
   kpm: number | null;
   kd: number | null;
   weapon: string | null;
+  kpm180: number | null;
+  mainRole: string | null;
+  statError: string | null;
   mapName: string | null;
   duration: string | null;
   playedOn: string | null;
@@ -174,7 +177,7 @@ export function StatsClient() {
   const [hllRecordsLoading, setHllRecordsLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [activeTab, setActiveTab] = useState<"runner" | "leaderboards" | "recentKills">("runner");
+  const [activeTab, setActiveTab] = useState<"runner" | "leaderboards" | "recentKills" | "poach">("runner");
   const [playerSearch, setPlayerSearch] = useState("");
   const [playerMetric, setPlayerMetric] = useState<"kpm" | "duelStrength">("kpm");
   const [teamMetric, setTeamMetric] = useState<"kpm" | "duelStrength">("kpm");
@@ -380,6 +383,29 @@ export function StatsClient() {
         return left.team.localeCompare(right.team);
       });
   }, [infantryPlayers, teamMetric]);
+
+  const poachCandidates = useMemo(() => {
+    return hllRecordsServers
+      .flatMap((server) =>
+        server.results
+          .filter((result) => result.isFreePlayer)
+          .map((result) => ({
+            ...result,
+            serverName: server.name,
+            serverUrl: server.sourceUrl,
+            serverLastRunAt: server.lastRunAt,
+          })),
+      )
+      .sort((left, right) => {
+        const leftKpm = left.kpm180 ?? -1;
+        const rightKpm = right.kpm180 ?? -1;
+        if (leftKpm !== rightKpm) {
+          return rightKpm - leftKpm;
+        }
+
+        return right.kills - left.kills;
+      });
+  }, [hllRecordsServers]);
 
   async function startRun() {
     setBusy(true);
@@ -611,6 +637,13 @@ export function StatsClient() {
           type="button"
         >
           HLLRecords 100+
+        </button>
+        <button
+          className={activeTab === "poach" ? "primary-button px-4 py-2" : "px-4 py-2"}
+          onClick={() => setActiveTab("poach")}
+          type="button"
+        >
+          Players to poach
         </button>
       </div>
 
@@ -914,7 +947,7 @@ export function StatsClient() {
             </section>
           </div>
         </>
-      ) : (
+      ) : activeTab === "recentKills" ? (
         <>
           <section className="surface-card p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1016,6 +1049,8 @@ export function StatsClient() {
                         <th className="px-4 py-3">KPM</th>
                         <th className="px-4 py-3">KD</th>
                         <th className="px-4 py-3">Most used</th>
+                        <th className="px-4 py-3">KPM 180d</th>
+                        <th className="px-4 py-3">MainRole</th>
                         <th className="px-4 py-3">Match</th>
                         <th className="px-4 py-3">Steam ID</th>
                         <th className="px-4 py-3">Roster</th>
@@ -1033,6 +1068,10 @@ export function StatsClient() {
                           <td className="px-4 py-3">{formatValue(result.kpm)}</td>
                           <td className="px-4 py-3">{formatValue(result.kd)}</td>
                           <td className="px-4 py-3">{result.weapon || "-"}</td>
+                          <td className="px-4 py-3">{formatValue(result.kpm180)}</td>
+                          <td className="px-4 py-3">
+                            {result.mainRole || (result.statError ? "Stats failed" : "-")}
+                          </td>
                           <td className="px-4 py-3">
                             {result.mapName || "-"}
                             {result.duration ? ` (${result.duration})` : ""}
@@ -1065,7 +1104,7 @@ export function StatsClient() {
                       ))}
                       {server.results.length === 0 ? (
                         <tr>
-                          <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                          <td colSpan={12} className="px-4 py-6 text-center muted-copy">
                             No gun-based recent 100+ kill matches found for this page yet.
                           </td>
                         </tr>
@@ -1077,6 +1116,91 @@ export function StatsClient() {
               </section>
               );
             })}
+          </div>
+        </>
+      ) : (
+        <>
+          <section className="surface-card p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-500">Free agents</p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight">Players to poach</h2>
+                <p className="mt-2 max-w-3xl text-sm muted-copy">
+                  Free players from the saved HLLRecords 100+ lists, filtered to gun-based results and ranked by 180d
+                  comp KPM from their HLLRecords profile.
+                </p>
+              </div>
+              <p className="text-sm muted-copy">{poachCandidates.length} available players</p>
+            </div>
+          </section>
+
+          <div className="surface-table">
+            <table className="w-full border-collapse text-left text-sm">
+              <thead>
+                <tr>
+                  <th className="px-4 py-3">Rank</th>
+                  <th className="px-4 py-3">Player</th>
+                  <th className="px-4 py-3">KPM 180d</th>
+                  <th className="px-4 py-3">100+ kills</th>
+                  <th className="px-4 py-3">100+ KPM</th>
+                  <th className="px-4 py-3">Most used</th>
+                  <th className="px-4 py-3">MainRole</th>
+                  <th className="px-4 py-3">Source</th>
+                  <th className="px-4 py-3">Steam ID</th>
+                  <th className="px-4 py-3">Profile</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hllRecordsLoading ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                      Loading players to poach...
+                    </td>
+                  </tr>
+                ) : null}
+                {!hllRecordsLoading && poachCandidates.map((result, index) => (
+                  <tr key={`${result.id}-${result.serverName}`} className="bg-emerald-500/10">
+                    <td className="px-4 py-3 font-semibold">{index + 1}</td>
+                    <td className="px-4 py-3 font-semibold text-emerald-300">{result.playerName}</td>
+                    <td className="px-4 py-3 font-semibold">{formatValue(result.kpm180)}</td>
+                    <td className="px-4 py-3">{result.kills}</td>
+                    <td className="px-4 py-3">{formatValue(result.kpm)}</td>
+                    <td className="px-4 py-3">{result.weapon || "-"}</td>
+                    <td className="px-4 py-3">{result.mainRole || (result.statError ? "Stats failed" : "-")}</td>
+                    <td className="px-4 py-3">
+                      <a
+                        href={result.serverUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-cyan-400 underline decoration-cyan-400/50 underline-offset-4"
+                      >
+                        {result.serverName}
+                      </a>
+                      <br />
+                      <span className="text-xs muted-copy">{result.mapName || "-"}</span>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs">{result.steamId || "-"}</td>
+                    <td className="px-4 py-3">
+                      <a
+                        href={result.profileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-cyan-400 underline decoration-cyan-400/50 underline-offset-4"
+                      >
+                        Open
+                      </a>
+                    </td>
+                  </tr>
+                ))}
+                {!hllRecordsLoading && poachCandidates.length === 0 ? (
+                  <tr>
+                    <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                      No free gun-based 100+ players found yet.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
         </>
       )}

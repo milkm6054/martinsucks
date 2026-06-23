@@ -178,6 +178,9 @@ model HllRecentKillMatch {
   kpm         Float?
   kd          Float?
   weapon      String?
+  kpm180      Float?
+  mainRole    String?
+  statError   String?
   mapName     String?
   duration    String?
   playedOn    String?

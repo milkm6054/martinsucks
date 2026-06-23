@@ -5,6 +5,7 @@ import {
   HllRecentKillScrapeResult,
   normalizeHllRecordsServerUrl,
 } from "@/lib/stats/hllRecentKills";
+import { fetchHllRecordStatsBatch } from "@/lib/stats/hllRecords";
 
 type HllRecordsServerWithResults = Awaited<ReturnType<typeof queryHllRecordsServers>>[number];
 type HllRecordsResultWithRosterFlags = HllRecordsServerWithResults["results"][number] & {
@@ -149,6 +150,9 @@ export function serializeHllRecordsServer(server: HllRecordsServerWithRosterFlag
       kpm: result.kpm,
       kd: result.kd,
       weapon: result.weapon,
+      kpm180: result.kpm180,
+      mainRole: result.mainRole,
+      statError: result.statError,
       mapName: result.mapName,
       duration: result.duration,
       playedOn: result.playedOn,
@@ -196,6 +200,14 @@ export async function refreshHllRecordsServer(serverId: string) {
     const scrape = await fetchHllRecentKills(server.sourceUrl);
     const fetchedAt = new Date();
     const gunResults = scrape.results.filter(isGunResult);
+    const steamIds = Array.from(
+      new Set(
+        gunResults
+          .map((result) => result.steamId?.trim())
+          .filter((steamId): steamId is string => Boolean(steamId)),
+      ),
+    );
+    const profileStatsBySteamId = await fetchHllRecordStatsBatch(steamIds);
 
     await prisma.$transaction(async (tx) => {
       await tx.hllRecentKillMatch.deleteMany({
@@ -204,23 +216,31 @@ export async function refreshHllRecordsServer(serverId: string) {
 
       if (gunResults.length > 0) {
         await tx.hllRecentKillMatch.createMany({
-          data: gunResults.map((result) => ({
-            serverId: server.id,
-            playerName: result.playerName,
-            profileUrl: result.profileUrl,
-            steamId: result.steamId || null,
-            kills: result.kills,
-            kpm: result.kpm ?? null,
-            kd: result.kd ?? null,
-            weapon: result.weapon ?? null,
-            mapName: result.mapName ?? null,
-            duration: result.duration ?? null,
-            playedOn: result.playedOn ?? null,
-            playedAt: result.playedAt ? new Date(result.playedAt) : null,
-            sourceOrder: result.sourceOrder,
-            rawLines: result.rawLines,
-            fetchedAt,
-          })),
+          data: gunResults.map((result) => {
+            const profileStats = result.steamId ? profileStatsBySteamId.get(result.steamId) : null;
+            const statError = profileStats instanceof Error ? profileStats.message : null;
+
+            return {
+              serverId: server.id,
+              playerName: result.playerName,
+              profileUrl: result.profileUrl,
+              steamId: result.steamId || null,
+              kills: result.kills,
+              kpm: result.kpm ?? null,
+              kd: result.kd ?? null,
+              weapon: result.weapon ?? null,
+              kpm180: profileStats && !(profileStats instanceof Error) ? profileStats.kpm180 : null,
+              mainRole: profileStats && !(profileStats instanceof Error) ? profileStats.mainRole : null,
+              statError,
+              mapName: result.mapName ?? null,
+              duration: result.duration ?? null,
+              playedOn: result.playedOn ?? null,
+              playedAt: result.playedAt ? new Date(result.playedAt) : null,
+              sourceOrder: result.sourceOrder,
+              rawLines: result.rawLines,
+              fetchedAt,
+            };
+          }),
         });
       }
 

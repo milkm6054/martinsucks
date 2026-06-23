@@ -1,0 +1,4 @@
+ALTER TABLE "HllRecentKillMatch"
+ADD COLUMN "kpm180" DOUBLE PRECISION,
+ADD COLUMN "mainRole" TEXT,
+ADD COLUMN "statError" TEXT;
