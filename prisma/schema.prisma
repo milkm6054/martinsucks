@@ -42,6 +42,13 @@ enum StatsRunSpeed {
   FAST
 }
 
+enum HllRecordsFetchStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model Team {
   id            String        @id
   name          String        @unique
@@ -145,4 +152,43 @@ model StatsRunItem {
   @@index([runId, position])
   @@index([playerId])
   @@map("StatsRunItem")
+}
+
+model HllRecordsServer {
+  id          String                @id @default(cuid())
+  name        String
+  sourceUrl   String                @unique
+  fetchStatus HllRecordsFetchStatus @default(PENDING)
+  fetchError  String?
+  lastRunAt   DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+  results     HllRecentKillMatch[]
+
+  @@map("HllRecordsServer")
+}
+
+model HllRecentKillMatch {
+  id          String           @id @default(cuid())
+  serverId    String
+  playerName  String
+  profileUrl  String
+  steamId     String?
+  kills       Int
+  kpm         Float?
+  kd          Float?
+  weapon      String?
+  mapName     String?
+  duration    String?
+  playedOn    String?
+  playedAt    DateTime?
+  sourceOrder Int
+  rawLines    String[]
+  fetchedAt   DateTime         @default(now())
+  createdAt   DateTime         @default(now())
+  server      HllRecordsServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([serverId, sourceOrder])
+  @@index([steamId])
+  @@map("HllRecentKillMatch")
 }

@@ -51,6 +51,38 @@ type StatsResponse = {
   };
 };
 
+type HllRecentKillResult = {
+  id: string;
+  playerName: string;
+  profileUrl: string;
+  steamId: string | null;
+  kills: number;
+  kpm: number | null;
+  kd: number | null;
+  weapon: string | null;
+  mapName: string | null;
+  duration: string | null;
+  playedOn: string | null;
+  playedAt: string | null;
+  sourceOrder: number;
+  fetchedAt: string;
+};
+
+type HllRecordsServer = {
+  id: string;
+  name: string;
+  sourceUrl: string;
+  fetchStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  fetchError: string | null;
+  lastRunAt: string | null;
+  createdAt: string;
+  results: HllRecentKillResult[];
+};
+
+type HllRecordsResponse = {
+  servers: HllRecordsServer[];
+};
+
 async function parseApiResponse<T>(response: Response): Promise<T & { error?: string }> {
   const text = await response.text();
   if (!text.trim()) {
@@ -132,14 +164,20 @@ function getNormalizedMainRole(row: PlayerRow): string | null {
 
 export function StatsClient() {
   const [data, setData] = useState<StatsResponse | null>(null);
+  const [hllRecordsServers, setHllRecordsServers] = useState<HllRecordsServer[]>([]);
   const [busy, setBusy] = useState(false);
+  const [hllRecordsBusy, setHllRecordsBusy] = useState(false);
+  const [rerunningServerId, setRerunningServerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [hllRecordsLoading, setHllRecordsLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [activeTab, setActiveTab] = useState<"runner" | "leaderboards">("runner");
+  const [activeTab, setActiveTab] = useState<"runner" | "leaderboards" | "recentKills">("runner");
   const [playerSearch, setPlayerSearch] = useState("");
   const [playerMetric, setPlayerMetric] = useState<"kpm" | "duelStrength">("kpm");
   const [teamMetric, setTeamMetric] = useState<"kpm" | "duelStrength">("kpm");
+  const [newHllRecordsName, setNewHllRecordsName] = useState("");
+  const [newHllRecordsUrl, setNewHllRecordsUrl] = useState("");
 
   const loadStats = useCallback(async () => {
     const response = await fetch("/api/stats", { cache: "no-store" });
@@ -150,6 +188,17 @@ export function StatsClient() {
     }
 
     setData(payload);
+  }, []);
+
+  const loadHllRecordsServers = useCallback(async () => {
+    const response = await fetch("/api/hll-records/servers", { cache: "no-store" });
+    const payload = await parseApiResponse<HllRecordsResponse>(response);
+
+    if (!response.ok) {
+      throw new Error(payload.error || "Failed to load HLLRecords servers.");
+    }
+
+    setHllRecordsServers(payload.servers || []);
   }, []);
 
   useEffect(() => {
@@ -174,6 +223,29 @@ export function StatsClient() {
       cancelled = true;
     };
   }, [loadStats]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      try {
+        await loadHllRecordsServers();
+      } catch (fetchError) {
+        if (!cancelled) {
+          setError(fetchError instanceof Error ? fetchError.message : "Failed to load HLLRecords servers.");
+        }
+      } finally {
+        if (!cancelled) {
+          setHllRecordsLoading(false);
+        }
+      }
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadHllRecordsServers]);
 
   useEffect(() => {
     if (!data?.latestRun || data.latestRun.status !== "RUNNING") {
@@ -443,6 +515,64 @@ export function StatsClient() {
     }
   }
 
+  async function addHllRecordsServer(event: React.FormEvent) {
+    event.preventDefault();
+    setHllRecordsBusy(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/hll-records/servers", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: newHllRecordsName,
+          sourceUrl: newHllRecordsUrl,
+        }),
+      });
+      const payload = await parseApiResponse<{ server: HllRecordsServer }>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to add HLLRecords server.");
+      }
+
+      setNotice("HLLRecords server added and scraped.");
+      setNewHllRecordsName("");
+      setNewHllRecordsUrl("");
+      await loadHllRecordsServers();
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Failed to add HLLRecords server.");
+    } finally {
+      setHllRecordsBusy(false);
+    }
+  }
+
+  async function rerunHllRecordsServer(serverId: string) {
+    setRerunningServerId(serverId);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch(`/api/hll-records/servers/${serverId}/refresh`, {
+        method: "POST",
+      });
+      const payload = await parseApiResponse<{ server: HllRecordsServer }>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to rerun HLLRecords server.");
+      }
+
+      setNotice("HLLRecords server rerun completed.");
+      await loadHllRecordsServers();
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Failed to rerun HLLRecords server.");
+    } finally {
+      setRerunningServerId(null);
+    }
+  }
+
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap gap-2">
@@ -459,6 +589,13 @@ export function StatsClient() {
           type="button"
         >
           Leaderboards
+        </button>
+        <button
+          className={activeTab === "recentKills" ? "primary-button px-4 py-2" : "px-4 py-2"}
+          onClick={() => setActiveTab("recentKills")}
+          type="button"
+        >
+          HLLRecords 100+
         </button>
       </div>
 
@@ -624,7 +761,7 @@ export function StatsClient() {
         </table>
       </div>
         </>
-      ) : (
+      ) : activeTab === "leaderboards" ? (
         <>
           <section className="surface-card p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -760,6 +897,137 @@ export function StatsClient() {
                 </table>
               </div>
             </section>
+          </div>
+        </>
+      ) : (
+        <>
+          <section className="surface-card p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-500">HLLRecords</p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight">Recent 100+ kill matches</h2>
+                <p className="mt-2 max-w-3xl text-sm muted-copy">
+                  Add a community page such as `https://hllrecords.com/exd` or `https://hllrecords.com/circle`.
+                  The scraper stores the latest Recent 100+ Kill Matches cards with profile links and Steam IDs.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <form onSubmit={addHllRecordsServer} className="grid gap-3 surface-card p-5 md:grid-cols-[1fr_2fr_auto]">
+            <input
+              value={newHllRecordsName}
+              onChange={(event) => setNewHllRecordsName(event.target.value)}
+              placeholder="Name, e.g. EXD"
+              disabled={hllRecordsBusy}
+            />
+            <input
+              type="url"
+              value={newHllRecordsUrl}
+              onChange={(event) => setNewHllRecordsUrl(event.target.value)}
+              placeholder="https://hllrecords.com/exd"
+              required
+              disabled={hllRecordsBusy}
+            />
+            <button className="primary-button px-4 py-2" disabled={hllRecordsBusy}>
+              {hllRecordsBusy ? "Scraping..." : "Add and run"}
+            </button>
+          </form>
+
+          {hllRecordsLoading ? (
+            <div className="surface-card p-6 text-sm muted-copy">Loading HLLRecords sources...</div>
+          ) : null}
+
+          {!hllRecordsLoading && hllRecordsServers.length === 0 ? (
+            <div className="surface-card p-6 text-sm muted-copy">
+              No HLLRecords server pages saved yet.
+            </div>
+          ) : null}
+
+          <div className="space-y-6">
+            {hllRecordsServers.map((server) => (
+              <section key={server.id} className="surface-card space-y-4 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-xl font-semibold tracking-tight">{server.name}</h3>
+                    <a
+                      href={server.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-cyan-400 underline decoration-cyan-400/50 underline-offset-4"
+                    >
+                      {server.sourceUrl}
+                    </a>
+                    <p className="mt-2 text-xs muted-copy">
+                      Status {server.fetchStatus} | Last run {formatDateTime(server.lastRunAt)}
+                    </p>
+                    {server.fetchError ? <p className="mt-2 text-xs text-red-400">{server.fetchError}</p> : null}
+                  </div>
+                  <button
+                    className="px-4 py-2"
+                    type="button"
+                    onClick={() => rerunHllRecordsServer(server.id)}
+                    disabled={rerunningServerId === server.id || hllRecordsBusy}
+                  >
+                    {rerunningServerId === server.id ? "Rerunning..." : "Rerun"}
+                  </button>
+                </div>
+
+                <div className="surface-table">
+                  <table className="w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr>
+                        <th className="px-4 py-3">#</th>
+                        <th className="px-4 py-3">Player</th>
+                        <th className="px-4 py-3">Kills</th>
+                        <th className="px-4 py-3">KPM</th>
+                        <th className="px-4 py-3">KD</th>
+                        <th className="px-4 py-3">Most used</th>
+                        <th className="px-4 py-3">Match</th>
+                        <th className="px-4 py-3">Steam ID</th>
+                        <th className="px-4 py-3">Profile</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {server.results.map((result) => (
+                        <tr key={result.id}>
+                          <td className="px-4 py-3">{result.sourceOrder}</td>
+                          <td className="px-4 py-3">{result.playerName}</td>
+                          <td className="px-4 py-3 font-semibold">{result.kills}</td>
+                          <td className="px-4 py-3">{formatValue(result.kpm)}</td>
+                          <td className="px-4 py-3">{formatValue(result.kd)}</td>
+                          <td className="px-4 py-3">{result.weapon || "-"}</td>
+                          <td className="px-4 py-3">
+                            {result.mapName || "-"}
+                            {result.duration ? ` (${result.duration})` : ""}
+                            <br />
+                            <span className="text-xs muted-copy">{result.playedOn || "-"}</span>
+                          </td>
+                          <td className="px-4 py-3 font-mono text-xs">{result.steamId || "-"}</td>
+                          <td className="px-4 py-3">
+                            <a
+                              href={result.profileUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-cyan-400 underline decoration-cyan-400/50 underline-offset-4"
+                            >
+                              Open
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                      {server.results.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="px-4 py-6 text-center muted-copy">
+                            No recent 100+ kill matches found for this page yet.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ))}
           </div>
         </>
       )}
