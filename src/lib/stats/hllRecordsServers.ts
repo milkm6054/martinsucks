@@ -1,4 +1,4 @@
-import { HllRecordsFetchStatus, RosterEntryStatus } from "@prisma/client";
+import { HllPoachStatus, HllRecordsFetchStatus, RosterEntryStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   fetchHllRecentKills,
@@ -11,6 +11,9 @@ type HllRecordsServerWithResults = Awaited<ReturnType<typeof queryHllRecordsServ
 type HllRecordsResultWithRosterFlags = HllRecordsServerWithResults["results"][number] & {
   isFreePlayer: boolean;
   rosterTeamNames: string[];
+  poachStatus: HllPoachStatus;
+  poachTeamId: string | null;
+  poachTeamName: string | null;
 };
 type HllRecordsServerWithRosterFlags = Omit<HllRecordsServerWithResults, "results"> & {
   results: HllRecordsResultWithRosterFlags[];
@@ -84,6 +87,9 @@ async function addRosterFlags(
           ...result,
           isFreePlayer: Boolean(result.steamId),
           rosterTeamNames: [],
+          poachStatus: HllPoachStatus.NEW,
+          poachTeamId: null,
+          poachTeamName: null,
         })),
     }));
   }
@@ -118,15 +124,40 @@ async function addRosterFlags(
     rosterTeamsBySteamId.set(entry.player.steamId64, teamSet);
   }
 
+  const poachStatuses = await prisma.hllPoachPlayerStatus.findMany({
+    where: {
+      steamId: {
+        in: steamIds,
+      },
+    },
+    include: {
+      team: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+  const poachStatusBySteamId = new Map(poachStatuses.map((status) => [status.steamId, status]));
+
   return servers.map((server) => ({
     ...server,
     results: server.results.filter((result) => isGunWeapon(result.weapon)).map((result) => {
       const rosterTeams = result.steamId ? Array.from(rosterTeamsBySteamId.get(result.steamId) ?? []) : [];
+      const poachStatus = result.steamId ? poachStatusBySteamId.get(result.steamId) : null;
+      const manualRosterTeamName = poachStatus?.status === HllPoachStatus.ROSTERED ? poachStatus.team?.name : null;
+      const visibleRosterTeams = manualRosterTeamName
+        ? Array.from(new Set([...rosterTeams, manualRosterTeamName]))
+        : rosterTeams;
 
       return {
         ...result,
-        isFreePlayer: Boolean(result.steamId) && rosterTeams.length === 0,
-        rosterTeamNames: rosterTeams,
+        isFreePlayer: Boolean(result.steamId) && visibleRosterTeams.length === 0,
+        rosterTeamNames: visibleRosterTeams,
+        poachStatus: poachStatus?.status ?? HllPoachStatus.NEW,
+        poachTeamId: poachStatus?.teamId ?? null,
+        poachTeamName: poachStatus?.team?.name ?? null,
       };
     }),
   }));
@@ -162,12 +193,71 @@ export function serializeHllRecordsServer(server: HllRecordsServerWithRosterFlag
       fetchedAt: result.fetchedAt.toISOString(),
       isFreePlayer: result.isFreePlayer,
       rosterTeamNames: result.rosterTeamNames,
+      poachStatus: result.poachStatus,
+      poachTeamId: result.poachTeamId,
+      poachTeamName: result.poachTeamName,
     })),
   };
 }
 
 export async function loadHllRecordsServers() {
   return addRosterFlags(await queryHllRecordsServers());
+}
+
+export async function loadHllRecordsTeams() {
+  return prisma.team.findMany({
+    orderBy: [{ name: "asc" }],
+    select: {
+      id: true,
+      name: true,
+      tag: true,
+    },
+  });
+}
+
+export async function updateHllPoachPlayerStatus({
+  steamId,
+  status,
+  teamId,
+}: {
+  steamId: string;
+  status: HllPoachStatus;
+  teamId?: string | null;
+}) {
+  const normalizedSteamId = steamId.trim();
+  if (!normalizedSteamId) {
+    throw new Error("Steam ID is required.");
+  }
+
+  const normalizedTeamId = status === HllPoachStatus.ROSTERED ? teamId?.trim() || null : null;
+
+  if (status === HllPoachStatus.ROSTERED && !normalizedTeamId) {
+    throw new Error("Select the HCA team roster for rostered players.");
+  }
+
+  if (normalizedTeamId) {
+    const team = await prisma.team.findUnique({
+      where: { id: normalizedTeamId },
+      select: { id: true },
+    });
+
+    if (!team) {
+      throw new Error("Selected HCA team was not found.");
+    }
+  }
+
+  return prisma.hllPoachPlayerStatus.upsert({
+    where: { steamId: normalizedSteamId },
+    create: {
+      steamId: normalizedSteamId,
+      status,
+      teamId: normalizedTeamId,
+    },
+    update: {
+      status,
+      teamId: normalizedTeamId,
+    },
+  });
 }
 
 async function loadHllRecordsServer(serverId: string) {

@@ -49,12 +49,20 @@ enum HllRecordsFetchStatus {
   FAILED
 }
 
+enum HllPoachStatus {
+  NEW
+  MESSAGED
+  SECURED
+  ROSTERED
+}
+
 model Team {
   id            String        @id
   name          String        @unique
   tag           String?
   logoDataUrl   String?
   rosterEntries RosterEntry[]
+  poachStatuses HllPoachPlayerStatus[]
 
   @@map("Team")
 }
@@ -194,4 +202,19 @@ model HllRecentKillMatch {
   @@index([serverId, sourceOrder])
   @@index([steamId])
   @@map("HllRecentKillMatch")
+}
+
+model HllPoachPlayerStatus {
+  id        String         @id @default(cuid())
+  steamId   String         @unique
+  status    HllPoachStatus @default(NEW)
+  teamId    String?
+  note      String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  team      Team?          @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([teamId])
+  @@map("HllPoachPlayerStatus")
 }

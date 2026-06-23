@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { normalizeHllRecordsServerUrl } from "@/lib/stats/hllRecentKills";
 import {
   loadHllRecordsServers,
+  loadHllRecordsTeams,
   refreshHllRecordsServer,
   serializeHllRecordsServer,
 } from "@/lib/stats/hllRecordsServers";
@@ -12,8 +13,8 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const servers = await loadHllRecordsServers();
-    return NextResponse.json({ servers: servers.map(serializeHllRecordsServer) });
+    const [servers, teams] = await Promise.all([loadHllRecordsServers(), loadHllRecordsTeams()]);
+    return NextResponse.json({ servers: servers.map(serializeHllRecordsServer), teams });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to load HLLRecords servers.";
     return NextResponse.json({ error: message }, { status: 500 });

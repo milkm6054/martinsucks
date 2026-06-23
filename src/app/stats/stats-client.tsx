@@ -51,6 +51,8 @@ type StatsResponse = {
   };
 };
 
+type HllPoachStatus = "NEW" | "MESSAGED" | "SECURED" | "ROSTERED";
+
 type HllRecentKillResult = {
   id: string;
   playerName: string;
@@ -71,6 +73,9 @@ type HllRecentKillResult = {
   fetchedAt: string;
   isFreePlayer: boolean;
   rosterTeamNames: string[];
+  poachStatus: HllPoachStatus;
+  poachTeamId: string | null;
+  poachTeamName: string | null;
 };
 
 type HllRecordsServer = {
@@ -86,6 +91,13 @@ type HllRecordsServer = {
 
 type HllRecordsResponse = {
   servers: HllRecordsServer[];
+  teams?: HllTeam[];
+};
+
+type HllTeam = {
+  id: string;
+  name: string;
+  tag: string | null;
 };
 
 async function parseApiResponse<T>(response: Response): Promise<T & { error?: string }> {
@@ -103,6 +115,15 @@ async function parseApiResponse<T>(response: Response): Promise<T & { error?: st
 
 function formatValue(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toFixed(2) : "-";
+}
+
+function averageValue(values: Array<number | null | undefined>): number | null {
+  const numericValues = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (numericValues.length === 0) {
+    return null;
+  }
+
+  return numericValues.reduce((total, value) => total + value, 0) / numericValues.length;
 }
 
 function formatDateTime(value: string | null | undefined): string {
@@ -170,9 +191,11 @@ function getNormalizedMainRole(row: PlayerRow): string | null {
 export function StatsClient() {
   const [data, setData] = useState<StatsResponse | null>(null);
   const [hllRecordsServers, setHllRecordsServers] = useState<HllRecordsServer[]>([]);
+  const [hllRecordsTeams, setHllRecordsTeams] = useState<HllTeam[]>([]);
   const [busy, setBusy] = useState(false);
   const [hllRecordsBusy, setHllRecordsBusy] = useState(false);
   const [rerunningServerId, setRerunningServerId] = useState<string | null>(null);
+  const [updatingPoachSteamId, setUpdatingPoachSteamId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hllRecordsLoading, setHllRecordsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -205,6 +228,7 @@ export function StatsClient() {
     }
 
     setHllRecordsServers(payload.servers || []);
+    setHllRecordsTeams(payload.teams || []);
   }, []);
 
   useEffect(() => {
@@ -385,7 +409,32 @@ export function StatsClient() {
   }, [infantryPlayers, teamMetric]);
 
   const poachCandidates = useMemo(() => {
-    return hllRecordsServers
+    const candidateMap = new Map<
+      string,
+      {
+        steamId: string;
+        playerName: string;
+        profileUrl: string;
+        kpm180: number | null;
+        averageKills: number | null;
+        averageKpm: number | null;
+        bestKills: number;
+        weapons: string[];
+        mainRole: string | null;
+        statError: string | null;
+        poachStatus: HllPoachStatus;
+        poachTeamId: string | null;
+        poachTeamName: string | null;
+        appearances: Array<HllRecentKillResult & {
+          serverName: string;
+          serverUrl: string;
+          serverLastRunAt: string | null;
+        }>;
+        sourceNames: string[];
+      }
+    >();
+
+    hllRecordsServers
       .flatMap((server) =>
         server.results
           .filter((result) => result.isFreePlayer)
@@ -396,6 +445,45 @@ export function StatsClient() {
             serverLastRunAt: server.lastRunAt,
           })),
       )
+      .forEach((result) => {
+        if (!result.steamId) {
+          return;
+        }
+
+        const existing = candidateMap.get(result.steamId);
+        const appearances = [...(existing?.appearances ?? []), result];
+        const sourceNames = Array.from(new Set(appearances.map((appearance) => appearance.serverName)));
+        const weapons = Array.from(
+          new Set(appearances.map((appearance) => appearance.weapon).filter((weapon): weapon is string => Boolean(weapon))),
+        );
+        const bestAppearance = appearances.reduce((best, appearance) => {
+          if (appearance.kills !== best.kills) {
+            return appearance.kills > best.kills ? appearance : best;
+          }
+
+          return (appearance.kpm ?? -1) > (best.kpm ?? -1) ? appearance : best;
+        }, appearances[0]);
+
+        candidateMap.set(result.steamId, {
+          steamId: result.steamId,
+          playerName: bestAppearance.playerName,
+          profileUrl: bestAppearance.profileUrl,
+          kpm180: averageValue(appearances.map((appearance) => appearance.kpm180)),
+          averageKills: averageValue(appearances.map((appearance) => appearance.kills)),
+          averageKpm: averageValue(appearances.map((appearance) => appearance.kpm)),
+          bestKills: bestAppearance.kills,
+          weapons,
+          mainRole: bestAppearance.mainRole,
+          statError: bestAppearance.statError,
+          poachStatus: bestAppearance.poachStatus,
+          poachTeamId: bestAppearance.poachTeamId,
+          poachTeamName: bestAppearance.poachTeamName,
+          appearances,
+          sourceNames,
+        });
+      });
+
+    return Array.from(candidateMap.values())
       .sort((left, right) => {
         const leftKpm = left.kpm180 ?? -1;
         const rightKpm = right.kpm180 ?? -1;
@@ -403,7 +491,7 @@ export function StatsClient() {
           return rightKpm - leftKpm;
         }
 
-        return right.kills - left.kills;
+        return right.bestKills - left.bestKills;
       });
   }, [hllRecordsServers]);
 
@@ -612,6 +700,41 @@ export function StatsClient() {
       }
       return next;
     });
+  }
+
+  async function updatePoachStatus(steamId: string, status: HllPoachStatus, teamId?: string | null) {
+    setUpdatingPoachSteamId(steamId);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/hll-records/poach", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          steamId,
+          status,
+          teamId: status === "ROSTERED" ? teamId : null,
+        }),
+      });
+      const payload = await parseApiResponse<HllRecordsResponse>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to update poach status.");
+      }
+
+      setHllRecordsServers(payload.servers || []);
+      if (payload.teams) {
+        setHllRecordsTeams(payload.teams);
+      }
+      setNotice("Poach status updated.");
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Failed to update poach status.");
+    } finally {
+      setUpdatingPoachSteamId(null);
+    }
   }
 
   return (
@@ -1140,9 +1263,11 @@ export function StatsClient() {
                 <tr>
                   <th className="px-4 py-3">Rank</th>
                   <th className="px-4 py-3">Player</th>
+                  <th className="px-4 py-3">Status</th>
                   <th className="px-4 py-3">KPM 180d</th>
-                  <th className="px-4 py-3">100+ kills</th>
-                  <th className="px-4 py-3">100+ KPM</th>
+                  <th className="px-4 py-3">Avg 100+ kills</th>
+                  <th className="px-4 py-3">Avg 100+ KPM</th>
+                  <th className="px-4 py-3">Hits</th>
                   <th className="px-4 py-3">Most used</th>
                   <th className="px-4 py-3">MainRole</th>
                   <th className="px-4 py-3">Source</th>
@@ -1153,31 +1278,67 @@ export function StatsClient() {
               <tbody>
                 {hllRecordsLoading ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                    <td colSpan={12} className="px-4 py-6 text-center muted-copy">
                       Loading players to poach...
                     </td>
                   </tr>
                 ) : null}
                 {!hllRecordsLoading && poachCandidates.map((result, index) => (
-                  <tr key={`${result.id}-${result.serverName}`} className="bg-emerald-500/10">
+                  <tr key={result.steamId} className="bg-emerald-500/10">
                     <td className="px-4 py-3 font-semibold">{index + 1}</td>
                     <td className="px-4 py-3 font-semibold text-emerald-300">{result.playerName}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex min-w-[240px] flex-wrap gap-2">
+                        <select
+                          value={result.poachStatus}
+                          onChange={(event) => {
+                            const nextStatus = event.target.value as HllPoachStatus;
+                            if (nextStatus === "ROSTERED" && !result.poachTeamId) {
+                              setError("Select the HCA team roster for rostered players.");
+                              return;
+                            }
+
+                            void updatePoachStatus(
+                              result.steamId,
+                              nextStatus,
+                              result.poachTeamId,
+                            );
+                          }}
+                          disabled={updatingPoachSteamId === result.steamId}
+                          className="min-w-[130px]"
+                        >
+                          <option value="NEW">NEW</option>
+                          <option value="MESSAGED">MESSAGED</option>
+                          <option value="SECURED">SECURED</option>
+                          <option value="ROSTERED">ROSTERED</option>
+                        </select>
+                        <select
+                          value={result.poachTeamId || ""}
+                          onChange={(event) => void updatePoachStatus(result.steamId, "ROSTERED", event.target.value)}
+                          disabled={updatingPoachSteamId === result.steamId}
+                          className="min-w-[160px]"
+                        >
+                          <option value="">Select roster</option>
+                          {hllRecordsTeams.map((team) => (
+                            <option key={team.id} value={team.id}>
+                              {team.tag ? `${team.name} (${team.tag})` : team.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </td>
                     <td className="px-4 py-3 font-semibold">{formatValue(result.kpm180)}</td>
-                    <td className="px-4 py-3">{result.kills}</td>
-                    <td className="px-4 py-3">{formatValue(result.kpm)}</td>
-                    <td className="px-4 py-3">{result.weapon || "-"}</td>
+                    <td className="px-4 py-3">{formatValue(result.averageKills)}</td>
+                    <td className="px-4 py-3">{formatValue(result.averageKpm)}</td>
+                    <td className="px-4 py-3">{result.appearances.length}</td>
+                    <td className="px-4 py-3">{result.weapons.slice(0, 3).join(", ") || "-"}</td>
                     <td className="px-4 py-3">{result.mainRole || (result.statError ? "Stats failed" : "-")}</td>
                     <td className="px-4 py-3">
-                      <a
-                        href={result.serverUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-cyan-400 underline decoration-cyan-400/50 underline-offset-4"
-                      >
-                        {result.serverName}
-                      </a>
+                      {result.sourceNames.join(", ")}
                       <br />
-                      <span className="text-xs muted-copy">{result.mapName || "-"}</span>
+                      <span className="text-xs muted-copy">
+                        Best {result.bestKills} kills | {result.appearances[0]?.mapName || "-"}
+                      </span>
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">{result.steamId || "-"}</td>
                     <td className="px-4 py-3">
@@ -1194,7 +1355,7 @@ export function StatsClient() {
                 ))}
                 {!hllRecordsLoading && poachCandidates.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                    <td colSpan={12} className="px-4 py-6 text-center muted-copy">
                       No free gun-based 100+ players found yet.
                     </td>
                   </tr>
