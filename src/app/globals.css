@@ -60,12 +60,17 @@ button {
 }
 
 .surface-table {
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--border);
   border-radius: 1.5rem;
   background: var(--panel);
   box-shadow: var(--shadow);
   backdrop-filter: blur(18px);
+}
+
+.surface-table table {
+  min-width: max-content;
 }
 
 .surface-table thead {

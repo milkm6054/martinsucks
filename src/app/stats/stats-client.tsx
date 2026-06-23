@@ -188,6 +188,30 @@ function getNormalizedMainRole(row: PlayerRow): string | null {
   return role === "-" ? null : role;
 }
 
+function getPoachStatusRowClass(status: HllPoachStatus): string {
+  if (status === "MESSAGED") {
+    return "bg-yellow-500/10";
+  }
+
+  if (status === "SECURED") {
+    return "bg-cyan-500/10";
+  }
+
+  return "bg-emerald-500/10";
+}
+
+function getPoachStatusTextClass(status: HllPoachStatus): string {
+  if (status === "MESSAGED") {
+    return "text-yellow-300";
+  }
+
+  if (status === "SECURED") {
+    return "text-cyan-300";
+  }
+
+  return "text-emerald-300";
+}
+
 export function StatsClient() {
   const [data, setData] = useState<StatsResponse | null>(null);
   const [hllRecordsServers, setHllRecordsServers] = useState<HllRecordsServer[]>([]);
@@ -1284,9 +1308,11 @@ export function StatsClient() {
                   </tr>
                 ) : null}
                 {!hllRecordsLoading && poachCandidates.map((result, index) => (
-                  <tr key={result.steamId} className="bg-emerald-500/10">
+                  <tr key={result.steamId} className={getPoachStatusRowClass(result.poachStatus)}>
                     <td className="px-4 py-3 font-semibold">{index + 1}</td>
-                    <td className="px-4 py-3 font-semibold text-emerald-300">{result.playerName}</td>
+                    <td className={`px-4 py-3 font-semibold ${getPoachStatusTextClass(result.poachStatus)}`}>
+                      {result.playerName}
+                    </td>
                     <td className="px-4 py-3">
                       <div className="flex min-w-[240px] flex-wrap gap-2">
                         <select
