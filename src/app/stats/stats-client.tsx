@@ -1296,13 +1296,12 @@ export function StatsClient() {
                   <th className="px-4 py-3">MainRole</th>
                   <th className="px-4 py-3">Source</th>
                   <th className="px-4 py-3">Steam ID</th>
-                  <th className="px-4 py-3">Profile</th>
                 </tr>
               </thead>
               <tbody>
                 {hllRecordsLoading ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-6 text-center muted-copy">
+                    <td colSpan={11} className="px-4 py-6 text-center muted-copy">
                       Loading players to poach...
                     </td>
                   </tr>
@@ -1311,7 +1310,17 @@ export function StatsClient() {
                   <tr key={result.steamId} className={getPoachStatusRowClass(result.poachStatus)}>
                     <td className="px-4 py-3 font-semibold">{index + 1}</td>
                     <td className={`px-4 py-3 font-semibold ${getPoachStatusTextClass(result.poachStatus)}`}>
-                      {result.playerName}
+                      <div className="flex min-w-[180px] flex-wrap items-center gap-2">
+                        <span>{result.playerName}</span>
+                        <a
+                          href={result.profileUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-medium text-cyan-400 underline decoration-cyan-400/50 underline-offset-4"
+                        >
+                          Profile
+                        </a>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex min-w-[240px] flex-wrap gap-2">
@@ -1367,21 +1376,11 @@ export function StatsClient() {
                       </span>
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">{result.steamId || "-"}</td>
-                    <td className="px-4 py-3">
-                      <a
-                        href={result.profileUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-cyan-400 underline decoration-cyan-400/50 underline-offset-4"
-                      >
-                        Open
-                      </a>
-                    </td>
                   </tr>
                 ))}
                 {!hllRecordsLoading && poachCandidates.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="px-4 py-6 text-center muted-copy">
+                    <td colSpan={11} className="px-4 py-6 text-center muted-copy">
                       No free gun-based 100+ players found yet.
                     </td>
                   </tr>
