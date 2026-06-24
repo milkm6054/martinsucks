@@ -359,3 +359,18 @@ export async function refreshHllRecordsServer(serverId: string) {
     throw new Error(message);
   }
 }
+
+export async function refreshAllHllRecordsServers() {
+  const servers = await prisma.hllRecordsServer.findMany({
+    orderBy: [{ createdAt: "asc" }],
+    select: {
+      id: true,
+    },
+  });
+
+  for (const server of servers) {
+    await refreshHllRecordsServer(server.id);
+  }
+
+  return loadHllRecordsServers();
+}

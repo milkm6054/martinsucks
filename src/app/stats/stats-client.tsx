@@ -219,6 +219,7 @@ export function StatsClient() {
   const [busy, setBusy] = useState(false);
   const [hllRecordsBusy, setHllRecordsBusy] = useState(false);
   const [rerunningServerId, setRerunningServerId] = useState<string | null>(null);
+  const [rerunningAllHllRecords, setRerunningAllHllRecords] = useState(false);
   const [updatingPoachSteamId, setUpdatingPoachSteamId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [hllRecordsLoading, setHllRecordsLoading] = useState(true);
@@ -714,6 +715,33 @@ export function StatsClient() {
     }
   }
 
+  async function rerunAllHllRecordsServers() {
+    setRerunningAllHllRecords(true);
+    setError("");
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/hll-records/servers/refresh", {
+        method: "POST",
+      });
+      const payload = await parseApiResponse<HllRecordsResponse>(response);
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to rerun all HLLRecords servers.");
+      }
+
+      setHllRecordsServers(payload.servers || []);
+      if (payload.teams) {
+        setHllRecordsTeams(payload.teams);
+      }
+      setNotice("All HLLRecords servers rerun completed.");
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Failed to rerun all HLLRecords servers.");
+    } finally {
+      setRerunningAllHllRecords(false);
+    }
+  }
+
   function toggleHllRecordsServer(serverId: string) {
     setExpandedHllRecordsServerIds((current) => {
       const next = new Set(current);
@@ -1106,6 +1134,14 @@ export function StatsClient() {
                   The scraper stores the latest Recent 100+ Kill Matches cards with profile links and Steam IDs.
                 </p>
               </div>
+              <button
+                className="primary-button px-4 py-2"
+                type="button"
+                onClick={rerunAllHllRecordsServers}
+                disabled={rerunningAllHllRecords || hllRecordsBusy || hllRecordsServers.length === 0}
+              >
+                {rerunningAllHllRecords ? "Rerunning all..." : "Rerun all"}
+              </button>
             </div>
           </section>
 
@@ -1114,7 +1150,7 @@ export function StatsClient() {
               value={newHllRecordsName}
               onChange={(event) => setNewHllRecordsName(event.target.value)}
               placeholder="Name, e.g. EXD"
-              disabled={hllRecordsBusy}
+              disabled={hllRecordsBusy || rerunningAllHllRecords}
             />
             <input
               type="url"
@@ -1122,9 +1158,9 @@ export function StatsClient() {
               onChange={(event) => setNewHllRecordsUrl(event.target.value)}
               placeholder="https://hllrecords.com/exd"
               required
-              disabled={hllRecordsBusy}
+              disabled={hllRecordsBusy || rerunningAllHllRecords}
             />
-            <button className="primary-button px-4 py-2" disabled={hllRecordsBusy}>
+            <button className="primary-button px-4 py-2" disabled={hllRecordsBusy || rerunningAllHllRecords}>
               {hllRecordsBusy ? "Scraping..." : "Add and run"}
             </button>
           </form>
@@ -1178,7 +1214,7 @@ export function StatsClient() {
                       className="px-4 py-2"
                       type="button"
                       onClick={() => rerunHllRecordsServer(server.id)}
-                      disabled={rerunningServerId === server.id || hllRecordsBusy}
+                      disabled={rerunningServerId === server.id || hllRecordsBusy || rerunningAllHllRecords}
                     >
                       {rerunningServerId === server.id ? "Rerunning..." : "Rerun"}
                     </button>

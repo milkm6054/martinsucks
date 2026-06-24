@@ -16,8 +16,8 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const username = process.env.BASIC_AUTH_USERNAME?.trim();
-  const password = process.env.BASIC_AUTH_PASSWORD?.trim();
+  const username = process.env.BASIC_AUTH_USERNAME?.trim() || "MILK";
+  const password = process.env.BASIC_AUTH_PASSWORD?.trim() || "PASSWORD";
 
   if (!username || !password) {
     return NextResponse.next();
