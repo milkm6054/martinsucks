@@ -94,6 +94,9 @@ type HllRecordsResponse = {
   teams?: HllTeam[];
 };
 
+type PoachSortKey = "kpm180" | "averageKills" | "averageKpm" | "hits" | "bestKills" | "playerName";
+type SortDirection = "asc" | "desc";
+
 type HllTeam = {
   id: string;
   name: string;
@@ -212,6 +215,14 @@ function getPoachStatusTextClass(status: HllPoachStatus): string {
   return "text-emerald-300";
 }
 
+function getPoachSortLabel(key: PoachSortKey, activeKey: PoachSortKey, direction: SortDirection) {
+  if (key !== activeKey) {
+    return "";
+  }
+
+  return direction === "desc" ? " desc" : " asc";
+}
+
 export function StatsClient() {
   const [data, setData] = useState<StatsResponse | null>(null);
   const [hllRecordsServers, setHllRecordsServers] = useState<HllRecordsServer[]>([]);
@@ -229,6 +240,8 @@ export function StatsClient() {
   const [playerSearch, setPlayerSearch] = useState("");
   const [playerMetric, setPlayerMetric] = useState<"kpm" | "duelStrength">("kpm");
   const [teamMetric, setTeamMetric] = useState<"kpm" | "duelStrength">("kpm");
+  const [poachSortKey, setPoachSortKey] = useState<PoachSortKey>("kpm180");
+  const [poachSortDirection, setPoachSortDirection] = useState<SortDirection>("desc");
   const [newHllRecordsName, setNewHllRecordsName] = useState("");
   const [newHllRecordsUrl, setNewHllRecordsUrl] = useState("");
   const [expandedHllRecordsServerIds, setExpandedHllRecordsServerIds] = useState<Set<string>>(() => new Set());
@@ -510,15 +523,31 @@ export function StatsClient() {
 
     return Array.from(candidateMap.values())
       .sort((left, right) => {
-        const leftKpm = left.kpm180 ?? -1;
-        const rightKpm = right.kpm180 ?? -1;
-        if (leftKpm !== rightKpm) {
-          return rightKpm - leftKpm;
+        if (poachSortKey === "playerName") {
+          const comparison = left.playerName.localeCompare(right.playerName);
+          return poachSortDirection === "asc" ? comparison : -comparison;
+        }
+
+        const leftValue =
+          poachSortKey === "hits"
+            ? left.appearances.length
+            : poachSortKey === "bestKills"
+              ? left.bestKills
+              : left[poachSortKey] ?? -1;
+        const rightValue =
+          poachSortKey === "hits"
+            ? right.appearances.length
+            : poachSortKey === "bestKills"
+              ? right.bestKills
+              : right[poachSortKey] ?? -1;
+
+        if (leftValue !== rightValue) {
+          return poachSortDirection === "asc" ? leftValue - rightValue : rightValue - leftValue;
         }
 
         return right.bestKills - left.bestKills;
       });
-  }, [hllRecordsServers]);
+  }, [hllRecordsServers, poachSortDirection, poachSortKey]);
 
   async function startRun() {
     setBusy(true);
@@ -754,6 +783,16 @@ export function StatsClient() {
     });
   }
 
+  function updatePoachSort(key: PoachSortKey) {
+    if (poachSortKey === key) {
+      setPoachSortDirection((current) => (current === "desc" ? "asc" : "desc"));
+      return;
+    }
+
+    setPoachSortKey(key);
+    setPoachSortDirection(key === "playerName" ? "asc" : "desc");
+  }
+
   async function updatePoachStatus(steamId: string, status: HllPoachStatus, teamId?: string | null) {
     setUpdatingPoachSteamId(steamId);
     setError("");
@@ -818,7 +857,7 @@ export function StatsClient() {
           onClick={() => setActiveTab("poach")}
           type="button"
         >
-          Players to poach
+          Poachable Eggs
         </button>
       </div>
 
@@ -1307,9 +1346,9 @@ export function StatsClient() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-cyan-500">Free agents</p>
-                <h2 className="mt-3 text-3xl font-semibold tracking-tight">Players to poach</h2>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight">Poachable Eggs</h2>
                 <p className="mt-2 max-w-3xl text-sm muted-copy">
-                  Free players from the saved HLLRecords 100+ lists, filtered to gun-based results and ranked by 180d
+                  Available players from the saved HLLRecords 100+ lists, filtered to gun-based results and ranked by 180d
                   comp KPM from their HLLRecords profile.
                 </p>
               </div>
@@ -1322,13 +1361,32 @@ export function StatsClient() {
               <thead>
                 <tr>
                   <th className="px-4 py-3">Rank</th>
-                  <th className="px-4 py-3">Player</th>
+                  <th className="px-4 py-3">
+                    <button className="border-0 p-0 text-left text-sm font-semibold" type="button" onClick={() => updatePoachSort("playerName")}>
+                      Player{getPoachSortLabel("playerName", poachSortKey, poachSortDirection)}
+                    </button>
+                  </th>
                   <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3">KPM 180d</th>
-                  <th className="px-4 py-3">Avg 100+ kills</th>
-                  <th className="px-4 py-3">Avg 100+ KPM</th>
-                  <th className="px-4 py-3">Hits</th>
-                  <th className="px-4 py-3">Most used</th>
+                  <th className="px-4 py-3">
+                    <button className="border-0 p-0 text-left text-sm font-semibold" type="button" onClick={() => updatePoachSort("kpm180")}>
+                      KPM 180d{getPoachSortLabel("kpm180", poachSortKey, poachSortDirection)}
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button className="border-0 p-0 text-left text-sm font-semibold" type="button" onClick={() => updatePoachSort("averageKills")}>
+                      Avg 100+ kills{getPoachSortLabel("averageKills", poachSortKey, poachSortDirection)}
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button className="border-0 p-0 text-left text-sm font-semibold" type="button" onClick={() => updatePoachSort("averageKpm")}>
+                      Avg 100+ KPM{getPoachSortLabel("averageKpm", poachSortKey, poachSortDirection)}
+                    </button>
+                  </th>
+                  <th className="px-4 py-3">
+                    <button className="border-0 p-0 text-left text-sm font-semibold" type="button" onClick={() => updatePoachSort("hits")}>
+                      Hits{getPoachSortLabel("hits", poachSortKey, poachSortDirection)}
+                    </button>
+                  </th>
                   <th className="px-4 py-3">MainRole</th>
                   <th className="px-4 py-3">Source</th>
                   <th className="px-4 py-3">Steam ID</th>
@@ -1337,8 +1395,8 @@ export function StatsClient() {
               <tbody>
                 {hllRecordsLoading ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-6 text-center muted-copy">
-                      Loading players to poach...
+                    <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                      Loading Poachable Eggs...
                     </td>
                   </tr>
                 ) : null}
@@ -1359,7 +1417,7 @@ export function StatsClient() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex min-w-[240px] flex-wrap gap-2">
+                      <div className="flex min-w-[190px] flex-wrap gap-2">
                         <select
                           value={result.poachStatus}
                           onChange={(event) => {
@@ -1376,7 +1434,7 @@ export function StatsClient() {
                             );
                           }}
                           disabled={updatingPoachSteamId === result.steamId}
-                          className="min-w-[130px]"
+                          className="w-[112px] px-2 py-2"
                         >
                           <option value="NEW">NEW</option>
                           <option value="MESSAGED">MESSAGED</option>
@@ -1387,7 +1445,7 @@ export function StatsClient() {
                           value={result.poachTeamId || ""}
                           onChange={(event) => void updatePoachStatus(result.steamId, "ROSTERED", event.target.value)}
                           disabled={updatingPoachSteamId === result.steamId}
-                          className="min-w-[160px]"
+                          className="w-[132px] px-2 py-2"
                         >
                           <option value="">Select roster</option>
                           {hllRecordsTeams.map((team) => (
@@ -1402,7 +1460,6 @@ export function StatsClient() {
                     <td className="px-4 py-3">{formatValue(result.averageKills)}</td>
                     <td className="px-4 py-3">{formatValue(result.averageKpm)}</td>
                     <td className="px-4 py-3">{result.appearances.length}</td>
-                    <td className="px-4 py-3">{result.weapons.slice(0, 3).join(", ") || "-"}</td>
                     <td className="px-4 py-3">{result.mainRole || (result.statError ? "Stats failed" : "-")}</td>
                     <td className="px-4 py-3">
                       {result.sourceNames.join(", ")}
@@ -1416,8 +1473,8 @@ export function StatsClient() {
                 ))}
                 {!hllRecordsLoading && poachCandidates.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-6 text-center muted-copy">
-                      No free gun-based 100+ players found yet.
+                    <td colSpan={10} className="px-4 py-6 text-center muted-copy">
+                      No Poachable Eggs found yet.
                     </td>
                   </tr>
                 ) : null}
